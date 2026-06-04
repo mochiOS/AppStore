@@ -3,13 +3,20 @@ PUBLIC_PORT = 8000
 API_PORT = 8001
 
 run:
-	@cd src/api && $(PHP) -S localhost:$(API_PORT) & \
+	@mkdir -p data/
+	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php & \
 	cd src/public && $(PHP) -S localhost:$(PUBLIC_PORT)
 
 api:
-	@cd src/api && $(PHP) -S localhost:$(API_PORT)
+	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php
 
 public:
 	@cd src/public && $(PHP) -S localhost:$(PUBLIC_PORT)
 
-.PHONY: run api public
+clean:
+	rm -rf data/
+
+migrate:
+	@$(PHP) src/cli/migrate.php
+
+.PHONY: run api public clean migrate

@@ -49,6 +49,7 @@
 }
 
 :root {
+  --font-sans: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", "Apple SD Gothic Neo", ui-sans-serif, system-ui, sans-serif;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

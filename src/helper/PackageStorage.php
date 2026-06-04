@@ -8,6 +8,15 @@ class PackageStorage
 
     public function absolutePath(string $relativePath): string
     {
+        if (str_starts_with($relativePath, 'data/') || $relativePath === 'data') {
+            $dataDir = Paths::dataDir();
+            if ($relativePath === 'data') {
+                return $dataDir;
+            }
+
+            return $dataDir . '/' . ltrim(substr($relativePath, 5), '/');
+        }
+
         return $this->root . ltrim($relativePath, '/');
     }
 

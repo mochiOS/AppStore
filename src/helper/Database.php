@@ -2,19 +2,19 @@
 
 class Database
 {
+    private static array $pdoByDsn = [];
+
     public static function get(): PDO
     {
-        static $pdo = null;
+        $dataDir = Paths::dataDir();
+        $dsn = 'sqlite:' . $dataDir . '/store.db';
 
-        if ($pdo === null) {
-            $dataDir = __DIR__ . '/../../data';
+        if (!isset(self::$pdoByDsn[$dsn])) {
             if (!is_dir($dataDir)) {
                 mkdir($dataDir, 0777, true);
             }
 
-            $pdo = new PDO(
-                'sqlite:' . __DIR__ . '/../../data/store.db'
-            );
+            $pdo = new PDO($dsn);
 
             $pdo->setAttribute(
                 PDO::ATTR_ERRMODE,
@@ -22,9 +22,16 @@ class Database
             );
 
             $pdo->exec('PRAGMA foreign_keys = ON');
+
+            self::$pdoByDsn[$dsn] = $pdo;
         }
 
-        return $pdo;
+        return self::$pdoByDsn[$dsn];
+    }
+
+    public static function reset(): void
+    {
+        self::$pdoByDsn = [];
     }
 }
 

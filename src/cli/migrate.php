@@ -1,5 +1,6 @@
 <?php
 
+require_once __DIR__ . '/../helper/Paths.php';
 require_once __DIR__ . '/../helper/Database.php';
 require_once __DIR__ . '/../helper/PackageStorage.php';
 
@@ -15,7 +16,7 @@ foreach (glob(__DIR__ . '/../migrations/*.sql') as $sqlFile) {
     $db->exec($sql);
 }
 
-$storage = new PackageStorage(__DIR__ . '/../../');
+$storage = new PackageStorage(Paths::repoRoot());
 $storage->ensurePlaceholderPackage(
     'data/releases/com.example/0.1.0.pkg',
     "mochiOS placeholder package for com.example 0.1.0\n"

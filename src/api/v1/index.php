@@ -4,98 +4,70 @@ if (!defined('ROOT')) {
     define('ROOT', __DIR__ . '/../../');
 }
 
+require_once ROOT . 'helper/ApiRequest.php';
+require_once ROOT . 'helper/Paths.php';
 require_once ROOT . 'helper/Database.php';
 require_once ROOT . 'helper/AppRepository.php';
 require_once ROOT . 'helper/ReleaseRepository.php';
+require_once ROOT . 'helper/AppCatalog.php';
 require_once ROOT . 'helper/ApiResponse.php';
 require_once ROOT . 'helper/PackageStorage.php';
 
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$method = ApiRequest::method();
 if ($method !== 'GET') {
     ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
     return;
 }
 
-$path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
-$path = urldecode($path);
-$path = preg_replace('#/index\.php$#', '/', $path);
-
-if (str_starts_with($path, '/v1')) {
-    $path = substr($path, 3);
-    if ($path === '') {
-        $path = '/';
-    }
-}
-
-if ($path !== '/') {
-    $path = rtrim($path, '/');
-    if ($path === '') {
-        $path = '/';
-    }
-}
-
 $appRepo = new AppRepository(Database::get());
 $releaseRepo = new ReleaseRepository(Database::get());
+$catalog = new AppCatalog($appRepo, $releaseRepo);
 $storage = new PackageStorage(ROOT);
 
-$limit = isset($_GET['limit']) ? max(0, (int) $_GET['limit']) : 50;
-$offset = isset($_GET['offset']) ? max(0, (int) $_GET['offset']) : 0;
+$path = ApiRequest::path();
+$limit = ApiRequest::queryInt('limit', 50, 0);
+$offset = ApiRequest::queryInt('offset', 0, 0);
 
 switch (true) {
     case $path === '/apps':
-        ApiResponse::json([
-            'apps' => $appRepo->findAll($limit, $offset),
-        ]);
+        ApiResponse::json($catalog->listApps($limit, $offset));
         return;
 
     case preg_match('#^/apps/([^/]+)/releases/([^/]+)$#', $path, $matches) === 1:
-        $bundleId = $matches[1];
-        $version = $matches[2];
-        $app = $appRepo->findByBundleId($bundleId);
-
-        if ($app === null) {
+        if (!$catalog->hasApp($matches[1])) {
             ApiResponse::error('APP_NOT_FOUND', 'App not found', 404);
             return;
         }
 
-        $release = $releaseRepo->findByBundleIdAndVersion($bundleId, $version);
+        $release = $catalog->findRelease($matches[1], $matches[2]);
         if ($release === null) {
             ApiResponse::error('RELEASE_NOT_FOUND', 'Release not found', 404);
             return;
         }
 
-        ApiResponse::json($releaseRepo->toApiRelease($release));
+        ApiResponse::json($release);
         return;
 
     case preg_match('#^/apps/([^/]+)/releases$#', $path, $matches) === 1:
-        $bundleId = $matches[1];
-        $app = $appRepo->findByBundleId($bundleId);
-
-        if ($app === null) {
+        $payload = $catalog->listReleases($matches[1]);
+        if ($payload === null) {
             ApiResponse::error('APP_NOT_FOUND', 'App not found', 404);
             return;
         }
 
-        ApiResponse::json([
-            'bundle_id' => $bundleId,
-            'releases' => $releaseRepo->findAllByBundleId($bundleId),
-        ]);
+        ApiResponse::json($payload);
         return;
 
     case preg_match('#^/apps/([^/]+)/download$#', $path, $matches) === 1:
         $bundleId = $matches[1];
-        $app = $appRepo->findByBundleId($bundleId);
+        $version = ApiRequest::queryString('version');
 
-        if ($app === null) {
+        if (!$catalog->hasApp($bundleId)) {
             ApiResponse::error('APP_NOT_FOUND', 'App not found', 404);
             return;
         }
 
-        $version = $_GET['version'] ?? null;
-        $release = $version === null || $version === ''
-            ? $releaseRepo->findLatestByBundleId($bundleId)
-            : $releaseRepo->findByBundleIdAndVersion($bundleId, $version);
-
+        $release = $catalog->findDownloadRelease($bundleId, $version);
         if ($release === null) {
             ApiResponse::error('RELEASE_NOT_FOUND', 'Release not found', 404);
             return;
@@ -113,20 +85,17 @@ switch (true) {
         return;
 
     case preg_match('#^/apps/([^/]+)$#', $path, $matches) === 1:
-        $bundleId = $matches[1];
-        $app = $appRepo->findByBundleId($bundleId);
-
+        $app = $catalog->findAppDetail($matches[1]);
         if ($app === null) {
             ApiResponse::error('APP_NOT_FOUND', 'App not found', 404);
             return;
         }
 
-        $app['releases'] = $releaseRepo->findAllByBundleId($bundleId);
         ApiResponse::json($app);
         return;
 
     case $path === '/search':
-        $query = trim((string) ($_GET['q'] ?? ''));
+        $query = ApiRequest::queryString('q', '');
         if ($query === '') {
             ApiResponse::json([
                 'query' => '',

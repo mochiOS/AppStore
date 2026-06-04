@@ -1,7 +1,6 @@
-# Simple AppStore system
+# mochiOS AppStore
 
-シンプルなアプリストアを作成できます。
-これは[tas0dev](https://github.com/tas0dev)が[mochiOS](https://mochios.github.io)のために作成しました。
+これは[tas0dev](https://github.com/tas0dev)が[mochiOS](https://mochios.github.io)のために作成されたアプリストアのシステムです。
 
 アプリバンドルの形式はmochiOSの形式に則って開発されていますが、一応ソースをいじれば変えれると思います。
 mochiOSのアプリバンドルの形式は[ここ](docs/appbundle.md)で定義されています。

@@ -1,0 +1,287 @@
+openapi: 3.0.0
+
+info:
+  title: mochiOS AppStore
+  description: mochiOS AppStore API
+  version: 1.0.0
+
+servers:
+  - url: https://localhost
+
+tags:
+  - name: Apps
+  - name: Releases
+  - name: Search
+
+paths:
+  /apps:
+    get:
+      tags:
+        - Apps
+      summary: アプリ一覧取得
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+
+      responses:
+        "200":
+          description: アプリ一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/App"
+
+  /apps/{bundleId}:
+    get:
+      tags:
+        - Apps
+      summary: アプリ詳細取得
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: string
+
+      responses:
+        "200":
+          description: アプリ詳細
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppDetail"
+        "404":
+          $ref: "#/components/responses/AppNotFound"
+
+  /apps/{bundleId}/releases:
+    get:
+      tags:
+        - Releases
+      summary: リリース一覧取得
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: string
+
+      responses:
+        "200":
+          description: リリース一覧
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bundle_id:
+                    type: string
+                  releases:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Release"
+        "404":
+          $ref: "#/components/responses/AppNotFound"
+
+  /apps/{bundleId}/releases/{version}:
+    get:
+      tags:
+        - Releases
+      summary: リリース詳細取得
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: string
+
+      responses:
+        "200":
+          description: リリース詳細
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Release"
+        "404":
+          $ref: "#/components/responses/ReleaseNotFound"
+
+  /apps/{bundleId}/download:
+    get:
+      tags:
+        - Releases
+      summary: パッケージダウンロード
+      parameters:
+        - name: bundleId
+          in: path
+          required: true
+          schema:
+            type: string
+
+        - name: version
+          in: query
+          required: false
+          schema:
+            type: string
+
+      responses:
+        "200":
+          description: pkgファイル
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+        "404":
+          $ref: "#/components/responses/ReleaseNotFound"
+
+  /search:
+    get:
+      tags:
+        - Search
+      summary: アプリ検索
+
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+
+      responses:
+        "200":
+          description: 検索結果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  query:
+                    type: string
+
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/App"
+
+components:
+
+  schemas:
+
+    App:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Binder
+
+        bundle_id:
+          type: string
+          example: com.mochi.binder
+
+        version:
+          type: string
+          example: 0.1.0
+
+        developer:
+          type: string
+          example: tas0dev
+
+        description:
+          type: string
+          example: Finder-like file manager
+
+        icon:
+          type: string
+          example: /icons/com.mochi.binder.png
+
+    AppDetail:
+      allOf:
+        - $ref: "#/components/schemas/App"
+        - type: object
+          properties:
+            releases:
+              type: array
+              items:
+                $ref: "#/components/schemas/Release"
+
+    Release:
+      type: object
+      properties:
+        version:
+          type: string
+          example: 0.1.0
+
+        size:
+          type: integer
+          example: 1048576
+
+        sha256:
+          type: string
+          example: 8f5d0c2f8f2f4c1f...
+
+        changelog:
+          type: string
+          example: Initial release
+
+        download_url:
+          type: string
+          example: /apps/com.mochi.binder/download?version=0.1.0
+          
+        created_at:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+  responses:
+    AppNotFound:
+      description: アプリが存在しない
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+          example:
+            error:
+              code: APP_NOT_FOUND
+              message: App not found
+
+    ReleaseNotFound:
+      description: リリースが存在しない
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+          example:
+            error:
+              code: RELEASE_NOT_FOUND
+              message: Release not found

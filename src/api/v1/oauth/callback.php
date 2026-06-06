@@ -101,7 +101,7 @@ try {
 unset($_SESSION['user_id']);
 $_SESSION['developer_id'] = $developer['developer_id'];
 
-header('Location: ' . $appConfig['frontend_url'] . '/auth/callback');
+header('Location: ' . $appConfig['frontend_url'] . '/');
 exit;
 
 function oauthPost(string $url, array $params): array

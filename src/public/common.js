@@ -10,42 +10,98 @@ function login(provider) {
         `${window.APP_CONFIG.API_URL}/v1/oauth/index.php?provider=${encodeURIComponent(provider)}`;
 }
 
-async function showMe() {
-    const res = await fetch(`${window.APP_CONFIG.API_URL}/v1/auth/me`, {
-        credentials: "include"
+async function apiFetch(path, options = {}) {
+    const response = await fetch(`${window.APP_CONFIG.API_URL}${path}`, {
+        credentials: "include",
+        ...options
     });
 
-    if (!res.ok) {
+    const text = await response.text();
+    let data = null;
+
+    if (text !== "") {
+        try {
+            data = JSON.parse(text);
+        } catch (error) {
+            data = {
+                raw: text
+            };
+        }
+    }
+
+    return {
+        ok: response.ok,
+        status: response.status,
+        data
+    };
+}
+
+async function showMe() {
+    const result = await apiFetch("/v1/auth/me");
+    if (!result.ok) {
         return null;
     }
 
-    return res.json();
+    return result.data;
 }
 
 async function showDeveloper() {
-    const res = await fetch(`${window.APP_CONFIG.API_URL}/v1/developers/me`, {
-        credentials: "include"
-    });
-
-    if (!res.ok) {
+    const result = await apiFetch("/v1/developers/me");
+    if (!result.ok) {
         return null;
     }
 
-    return res.json();
+    return result.data;
+}
+
+async function listKeys() {
+    return apiFetch("/v1/keys");
+}
+
+async function createKey(publicKey) {
+    return apiFetch("/v1/keys", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            public_key: publicKey
+        })
+    });
+}
+
+async function revokeKey(keyId) {
+    return apiFetch(`/v1/keys/${encodeURIComponent(keyId)}/revoke`, {
+        method: "POST"
+    });
+}
+
+async function listBundleIds() {
+    return apiFetch("/v1/bundle-ids");
+}
+
+async function createBundleId(bundleId, appName) {
+    return apiFetch("/v1/bundle-ids", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            bundle_id: bundleId,
+            app_name: appName
+        })
+    });
 }
 
 async function logout() {
     try {
-        const response = await fetch(
-            `${window.APP_CONFIG.API_URL}/v1/auth/logout`,
-            {
-                method: "POST",
-                credentials: "include"
-            }
-        );
+        const response = await apiFetch("/v1/auth/logout", {
+            method: "POST"
+        });
 
         if (!response.ok) {
-            Error("Logout failed");
+            console.error("Logout failed");
+            return;
         }
 
         location.href = "/";

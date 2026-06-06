@@ -6,28 +6,143 @@
     <script src="/common.js"></script>
 </head>
 <body>
-    <button class="isNotLogin" onclick="login('github')">
-        Login with GitHub
-    </button>
+    <h1>mochiOS Developer Console</h1>
 
-    <button class="isLogin" onclick="logout()">
-        Logout
-    </button>
+    <div>
+        <button class="isNotLogin" id="loginButton" type="button">
+            Login with GitHub
+        </button>
+        <button class="isLogin" id="logoutButton" type="button">
+            Logout
+        </button>
+    </div>
 
-    <p id="username"></p>
+    <div>
+        <p>認証状態: <span id="loginState">確認中</span></p>
+        <p>Developer ID: <span id="developerId">-</span></p>
+    </div>
+
+    <hr>
+
+    <section>
+        <h2>Profile</h2>
+        <button id="showMeButton" type="button">GET /v1/auth/me</button>
+        <button id="showDeveloperButton" type="button">GET /v1/developers/me</button>
+    </section>
+
+    <section class="isLogin">
+        <h2>Public Keys</h2>
+        <div>
+            <textarea id="publicKeyInput" rows="6" cols="80">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey mochios@example</textarea>
+        </div>
+        <div>
+            <button id="createKeyButton" type="button">POST /v1/keys</button>
+            <button id="listKeysButton" type="button">GET /v1/keys</button>
+        </div>
+        <div>
+            <input id="revokeKeyIdInput" type="text" placeholder="key_id">
+            <button id="revokeKeyButton" type="button">POST /v1/keys/{key_id}/revoke</button>
+        </div>
+    </section>
+
+    <section class="isLogin">
+        <h2>Bundle IDs</h2>
+        <div>
+            <input id="bundleIdInput" type="text" value="org.mochios.example">
+            <input id="appNameInput" type="text" value="Example App">
+        </div>
+        <div>
+            <button id="createBundleIdButton" type="button">POST /v1/bundle-ids</button>
+            <button id="listBundleIdsButton" type="button">GET /v1/bundle-ids</button>
+        </div>
+    </section>
+
+    <hr>
+
+    <section>
+        <h2>Response</h2>
+        <pre id="output"></pre>
+    </section>
 
     <script>
-        async function init() {
-            const user = await showMe();
+        const output = document.getElementById("output");
+        const loginState = document.getElementById("loginState");
+        const developerId = document.getElementById("developerId");
 
-            console.log(user);
+        function renderJson(value) {
+            output.textContent = JSON.stringify(value, null, 2);
+        }
 
-            if (!user) {
-                return;
+        async function refreshAuthSummary() {
+            const auth = await showMe();
+            const currentDeveloperId = auth && auth.developer_id
+                ? auth.developer_id
+                : "-";
+
+            loginState.textContent = auth ? "logged in" : "not logged in";
+            developerId.textContent = currentDeveloperId;
+
+            return auth;
+        }
+
+        async function handleRequest(callback) {
+            try {
+                const result = await callback();
+                renderJson(result);
+            } catch (error) {
+                renderJson({
+                    error: error.message
+                });
             }
+        }
 
-            document.getElementById("username").textContent =
-                user.display_name || user.username || "Unknown";
+        async function init() {
+            document.getElementById("loginButton").addEventListener("click", () => {
+                login("github");
+            });
+
+            document.getElementById("logoutButton").addEventListener("click", () => {
+                logout();
+            });
+
+            document.getElementById("showMeButton").addEventListener("click", async () => {
+                await handleRequest(showMe);
+                await refreshAuthSummary();
+                await updateLoginState();
+            });
+
+            document.getElementById("showDeveloperButton").addEventListener("click", async () => {
+                await handleRequest(showDeveloper);
+                await refreshAuthSummary();
+                await updateLoginState();
+            });
+
+            document.getElementById("createKeyButton").addEventListener("click", async () => {
+                const publicKey = document.getElementById("publicKeyInput").value;
+                await handleRequest(() => createKey(publicKey));
+            });
+
+            document.getElementById("listKeysButton").addEventListener("click", async () => {
+                await handleRequest(listKeys);
+            });
+
+            document.getElementById("revokeKeyButton").addEventListener("click", async () => {
+                const keyId = document.getElementById("revokeKeyIdInput").value.trim();
+                await handleRequest(() => revokeKey(keyId));
+            });
+
+            document.getElementById("createBundleIdButton").addEventListener("click", async () => {
+                const bundleId = document.getElementById("bundleIdInput").value.trim();
+                const appName = document.getElementById("appNameInput").value.trim();
+                await handleRequest(() => createBundleId(bundleId, appName));
+            });
+
+            document.getElementById("listBundleIdsButton").addEventListener("click", async () => {
+                await handleRequest(listBundleIds);
+            });
+
+            await refreshAuthSummary();
+            await updateLoginState();
         }
 
         init();

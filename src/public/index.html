@@ -6,8 +6,12 @@
     <script src="/common.js"></script>
 </head>
 <body>
-    <button onclick="login('github')">
+    <button class="isNotLogin" onclick="login('github')">
         Login with GitHub
+    </button>
+
+    <button class="isLogin" onclick="logout()">
+        Logout
     </button>
 
     <p id="username"></p>

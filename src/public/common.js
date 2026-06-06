@@ -42,3 +42,15 @@ async function logout() {
         console.error(error);
     }
 }
+
+async function updateLoginState() {
+    const user = await showMe();
+
+    document.querySelectorAll(".isLogin").forEach(element => {
+        element.style.display = user ? "" : "none";
+    });
+
+    document.querySelectorAll(".isNotLogin").forEach(element => {
+        element.style.display = user ? "none" : "";
+    });
+}   updateLoginState().then(() => {});

@@ -5,6 +5,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 }
 
 require_once __DIR__ . '/../../../helper/OAuth/Provider.php';
+require_once __DIR__ . '/../../../helper/Paths.php';
 require_once __DIR__ . '/../../../helper/Database.php';
 require_once __DIR__ . '/../../../helper/AppConfig.php';
 require_once __DIR__ . '/../../../helper/DeveloperRepository.php';
@@ -46,13 +47,19 @@ $appConfig = AppConfig::get();
 
 $redirectUri = $appConfig['api_url'] . '/v1/oauth/callback.php';
 
-$token = oauthPost($config['token_url'], [
-    'client_id' => $config['client_id'],
-    'client_secret' => $config['client_secret'],
-    'code' => $code,
-    'redirect_uri' => $redirectUri,
-    'grant_type' => 'authorization_code',
-]);
+try {
+    $token = oauthPost($config['token_url'], [
+        'client_id' => $config['client_id'],
+        'client_secret' => $config['client_secret'],
+        'code' => $code,
+        'redirect_uri' => $redirectUri,
+        'grant_type' => 'authorization_code',
+    ]);
+} catch (Throwable $e) {
+    http_response_code(401);
+    echo 'OAuth code is invalid or already used. Please start login again.';
+    exit;
+}
 
 $accessToken = $token['access_token'] ?? null;
 
@@ -62,7 +69,14 @@ if (!$accessToken) {
     exit;
 }
 
-$rawUser = oauthGet($config['user_url'], $accessToken);
+try {
+    $rawUser = oauthGet($config['user_url'], $accessToken);
+} catch (Throwable $e) {
+    http_response_code(502);
+    echo 'Failed to get OAuth user';
+    exit;
+}
+
 $providerSubject = Provider::subject($provider, $rawUser);
 if ($providerSubject === null) {
     http_response_code(401);
@@ -70,8 +84,19 @@ if ($providerSubject === null) {
     exit;
 }
 
-$developers = new DeveloperRepository(Database::get());
-$developer = $developers->findOrCreateByOAuth($provider, $providerSubject);
+try {
+    $developers = new DeveloperRepository(Database::get());
+    $developer = $developers->findOrCreateByOAuth($provider, $providerSubject);
+} catch (Throwable $e) {
+    http_response_code(500);
+    if (($appConfig['env'] ?? '') === 'local') {
+        echo 'Failed to create developer session: ' . $e->getMessage();
+        exit;
+    }
+
+    echo 'Failed to create developer session';
+    exit;
+}
 
 unset($_SESSION['user_id']);
 $_SESSION['developer_id'] = $developer['developer_id'];

@@ -3,6 +3,11 @@
 return [
     'env' => 'local',
     'oauth_subject_salt' => '',
+    'admin_api_token' => '',
+    'ca_cert_path' => '',
+    'ca_key_path' => '',
+    'ca_key_passphrase' => '',
+    'ca_certificate_days' => 365,
 
     'local' => [
         'frontend_url' => 'http://localhost:3000',

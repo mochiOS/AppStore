@@ -31,6 +31,14 @@ function assertContains(string $needle, string $haystack, string $message = ''):
     }
 }
 
+function assertNotNull(mixed $value, string $message = ''): void
+{
+    if ($value === null) {
+        $details = $message !== '' ? $message . ' ' : '';
+        throw new RuntimeException($details . 'expected non-null value');
+    }
+}
+
 function assertFileExistsStrict(string $path, string $message = ''): void
 {
     if (!is_file($path)) {
@@ -88,3 +96,40 @@ function apiJsonRequest(
     ];
 }
 
+function generatePemKeyAndCsr(string $commonName): array
+{
+    $privateKey = openssl_pkey_new([
+        'private_key_type' => OPENSSL_KEYTYPE_RSA,
+        'private_key_bits' => 2048,
+    ]);
+
+    if ($privateKey === false) {
+        throw new RuntimeException('Failed to generate private key');
+    }
+
+    $csr = openssl_csr_new([
+        'commonName' => $commonName,
+    ], $privateKey, [
+        'digest_alg' => 'sha256',
+    ]);
+
+    if ($csr === false) {
+        throw new RuntimeException('Failed to generate CSR');
+    }
+
+    $csrPem = '';
+    $privateKeyPem = '';
+
+    if (!openssl_csr_export($csr, $csrPem)) {
+        throw new RuntimeException('Failed to export CSR');
+    }
+
+    if (!openssl_pkey_export($privateKey, $privateKeyPem)) {
+        throw new RuntimeException('Failed to export private key');
+    }
+
+    return [
+        'private_key_pem' => $privateKeyPem,
+        'csr_pem' => $csrPem,
+    ];
+}

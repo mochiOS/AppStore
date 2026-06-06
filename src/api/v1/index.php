@@ -12,6 +12,8 @@ require_once ROOT . 'helper/Database.php';
 require_once ROOT . 'helper/AppRepository.php';
 require_once ROOT . 'helper/ReleaseRepository.php';
 require_once ROOT . 'helper/DeveloperRepository.php';
+require_once ROOT . 'helper/DeveloperCertificateRepository.php';
+require_once ROOT . 'helper/CertificateAuthority.php';
 require_once ROOT . 'helper/ApiResponse.php';
 require_once ROOT . 'helper/ApiRequest.php';
 require_once ROOT . 'helper/PackageStorage.php';
@@ -43,6 +45,8 @@ $db = Database::get();
 $appRepo = new AppRepository($db);
 $releaseRepo = new ReleaseRepository($db);
 $developerRepo = new DeveloperRepository($db);
+$certificateRepo = new DeveloperCertificateRepository($db);
+$certificateAuthority = CertificateAuthority::fromAppConfig($appConfig);
 $storage = new PackageStorage(ROOT);
 
 $limit = isset($_GET['limit']) ? max(0, (int) $_GET['limit']) : 50;
@@ -87,6 +91,21 @@ if (!function_exists('readJsonBody')) {
         }
 
         return $payload;
+    }
+}
+
+if (!function_exists('requireAdminToken')) {
+    function requireAdminToken(array $appConfig): string
+    {
+        $configuredToken = (string) (getenv('APPSTORE_ADMIN_API_TOKEN') ?: ($appConfig['admin_api_token'] ?? ''));
+        $providedToken = (string) ($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
+
+        if ($configuredToken === '' || !hash_equals($configuredToken, $providedToken)) {
+            ApiResponse::error('FORBIDDEN', 'Admin token is required', 403);
+            throw new ApiAbortException('Forbidden');
+        }
+
+        return 'admin';
     }
 }
 
@@ -465,6 +484,223 @@ try {
             ApiResponse::json([
                 'bundle_id' => $bundle,
             ], 201);
+            return;
+
+        case $path === '/developer-verifications/me':
+            if ($method !== 'GET') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $developerId = requireDeveloperId();
+            ApiResponse::json([
+                'verification' => $certificateRepo->findVerificationByDeveloperId($developerId),
+            ]);
+            return;
+
+        case $path === '/developer-verifications/request':
+            if ($method !== 'POST') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $developerId = requireDeveloperId();
+            $payload = readJsonBody();
+            $note = isset($payload['note']) ? trim((string) $payload['note']) : null;
+
+            ApiResponse::json([
+                'verification' => $certificateRepo->requestVerification($developerId, $note),
+            ], 201);
+            return;
+
+        case $path === '/certificate-requests':
+            $developerId = requireDeveloperId();
+
+            if ($method === 'GET') {
+                ApiResponse::json([
+                    'certificate_requests' => $certificateRepo->listCertificateSigningRequestsByDeveloperId($developerId),
+                ]);
+                return;
+            }
+
+            if ($method !== 'POST') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $verification = $certificateRepo->findVerificationByDeveloperId($developerId);
+            if ($verification === null || $verification['verification_status'] !== 'verified') {
+                ApiResponse::error('DEVELOPER_NOT_VERIFIED', 'Developer verification is required', 403);
+                return;
+            }
+
+            $payload = readJsonBody();
+            $csrPem = trim((string) ($payload['csr_pem'] ?? ''));
+            if ($csrPem === '') {
+                ApiResponse::error('VALIDATION_ERROR', 'csr_pem is required', 422);
+                return;
+            }
+
+            $csrInfo = $certificateAuthority->parseCsr($csrPem);
+            $csr = $certificateRepo->createCertificateSigningRequest($developerId, $csrPem, $csrInfo);
+
+            ApiResponse::json([
+                'certificate_request' => $csr,
+            ], 201);
+            return;
+
+        case $path === '/certificates':
+            if ($method !== 'GET') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $developerId = requireDeveloperId();
+            ApiResponse::json([
+                'certificates' => $certificateRepo->listCertificatesByDeveloperId($developerId),
+            ]);
+            return;
+
+        case preg_match('#^/certificates/([^/]+)$#', $path, $matches) === 1:
+            if ($method !== 'GET') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $developerId = requireDeveloperId();
+            $certificate = $certificateRepo->findCertificateById($matches[1]);
+            if ($certificate === null || $certificate['developer_id'] !== $developerId) {
+                ApiResponse::error('CERTIFICATE_NOT_FOUND', 'Certificate not found', 404);
+                return;
+            }
+
+            ApiResponse::json([
+                'certificate' => $certificate,
+            ]);
+            return;
+
+        case $path === '/ca/root':
+            if ($method !== 'GET') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            if (!$certificateAuthority->isConfigured()) {
+                ApiResponse::error('CA_NOT_CONFIGURED', 'Certificate authority is not configured', 503);
+                return;
+            }
+
+            ApiResponse::json([
+                'ca' => [
+                    'configured' => true,
+                    'fingerprint' => $certificateAuthority->rootFingerprint(),
+                    'certificate_pem' => $certificateAuthority->rootCertificatePem(),
+                ],
+            ]);
+            return;
+
+        case preg_match('#^/admin/developers/([^/]+)/verification$#', $path, $matches) === 1:
+            if ($method !== 'POST') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $adminId = requireAdminToken($appConfig);
+            $developerId = $matches[1];
+            $developer = $developerRepo->findById($developerId);
+            if ($developer === null) {
+                ApiResponse::error('DEVELOPER_NOT_FOUND', 'Developer not found', 404);
+                return;
+            }
+
+            $payload = readJsonBody();
+            $status = (string) ($payload['verification_status'] ?? '');
+            $note = isset($payload['note']) ? trim((string) $payload['note']) : null;
+            if (!in_array($status, ['verified', 'rejected'], true)) {
+                ApiResponse::error('VALIDATION_ERROR', 'verification_status must be verified or rejected', 422);
+                return;
+            }
+
+            ApiResponse::json([
+                'verification' => $certificateRepo->updateVerification($developerId, $status, $note, $adminId),
+            ]);
+            return;
+
+        case preg_match('#^/admin/certificate-requests/([^/]+)/issue$#', $path, $matches) === 1:
+            if ($method !== 'POST') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $adminId = requireAdminToken($appConfig);
+            if (!$certificateAuthority->isConfigured()) {
+                ApiResponse::error('CA_NOT_CONFIGURED', 'Certificate authority is not configured', 503);
+                return;
+            }
+
+            $csr = $certificateRepo->findCertificateSigningRequestById($matches[1]);
+            if ($csr === null) {
+                ApiResponse::error('CSR_NOT_FOUND', 'Certificate signing request not found', 404);
+                return;
+            }
+
+            $verification = $certificateRepo->findVerificationByDeveloperId($csr['developer_id']);
+            if ($verification === null || $verification['verification_status'] !== 'verified') {
+                ApiResponse::error('DEVELOPER_NOT_VERIFIED', 'Developer verification is required', 403);
+                return;
+            }
+
+            $issued = $certificateAuthority->issueCertificate($csr['csr_pem']);
+            $certificate = $certificateRepo->issueCertificate($csr['csr_id'], $adminId, $issued);
+
+            ApiResponse::json([
+                'certificate' => $certificate,
+            ], 201);
+            return;
+
+        case preg_match('#^/admin/certificate-requests/([^/]+)/reject$#', $path, $matches) === 1:
+            if ($method !== 'POST') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            $adminId = requireAdminToken($appConfig);
+            $payload = readJsonBody();
+            $reason = isset($payload['reason']) ? trim((string) $payload['reason']) : null;
+            $csr = $certificateRepo->rejectCertificateSigningRequest($matches[1], $adminId, $reason);
+            if ($csr === null) {
+                ApiResponse::error('CSR_NOT_FOUND', 'Certificate signing request not found', 404);
+                return;
+            }
+
+            ApiResponse::json([
+                'certificate_request' => $csr,
+            ]);
+            return;
+
+        case preg_match('#^/admin/certificates/([^/]+)/revoke$#', $path, $matches) === 1:
+            if ($method !== 'POST') {
+                ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+                return;
+            }
+
+            requireAdminToken($appConfig);
+            $payload = readJsonBody();
+            $reason = trim((string) ($payload['reason'] ?? ''));
+            if ($reason === '') {
+                ApiResponse::error('VALIDATION_ERROR', 'reason is required', 422);
+                return;
+            }
+
+            $certificate = $certificateRepo->revokeCertificate($matches[1], $reason);
+            if ($certificate === null) {
+                ApiResponse::error('CERTIFICATE_NOT_FOUND', 'Certificate not found', 404);
+                return;
+            }
+
+            ApiResponse::json([
+                'certificate' => $certificate,
+            ]);
             return;
 
         case $path === '/auth/logout':

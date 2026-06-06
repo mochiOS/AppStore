@@ -1,5 +1,24 @@
 <?php
 
+$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+$allowedOrigins = [
+    'http://localhost:3000',
+    'https://console.mochios.org',
+];
+
+if (in_array($origin, $allowedOrigins, true)) {
+    header('Access-Control-Allow-Origin: ' . $origin);
+    header('Vary: Origin');
+    header('Access-Control-Allow-Credentials: true');
+    header('Access-Control-Allow-Headers: Content-Type');
+    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
+    http_response_code(204);
+    return true;
+}
+
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $path = urldecode($path);
 
@@ -18,14 +37,19 @@ if ($path === '/v1' || $path === '/v1/') {
     return true;
 }
 
-if (preg_match('#^/(?:v1/)?(?:apps|search|auth|oauth)(?:/|$)#', $path)) {
+if (preg_match('#^/(?:v1/)?(?:apps|search|auth|oauth|developers|keys|bundle-ids)(?:/|$)#', $path)) {
     require __DIR__ . '/v1/index.php';
     return true;
 }
 
 http_response_code(404);
-echo 'Not Found';
+header('Content-Type: application/json; charset=utf-8');
+echo json_encode([
+    'error' => [
+        'code' => 'NOT_FOUND',
+        'message' => 'Not found',
+    ],
+], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
 return true;
-
 

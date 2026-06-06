@@ -1,6 +1,8 @@
 <?php
 
-session_start();
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
 
 require_once __DIR__ . '/../../../helper/Paths.php';
 require_once __DIR__ . '/../../../helper/Database.php';
@@ -8,41 +10,39 @@ require_once __DIR__ . '/../../../helper/Database.php';
 header('Content-Type: application/json');
 
 $userId = $_SESSION['user_id'] ?? null;
+$developerId = $_SESSION['developer_id'] ?? null;
 
-if (!$userId) {
+if (!$userId && !$developerId) {
     http_response_code(401);
     echo json_encode([
-        'ok' => false,
+        'authenticated' => false,
         'user' => null,
+        'developer_id' => null,
     ]);
     exit;
 }
 
-$pdo = Database::get();
+if ($userId) {
+    $pdo = Database::get();
 
-$stmt = $pdo->prepare(
-    'SELECT id, provider, provider_user_id, username, display_name, avatar_url
-     FROM users
-     WHERE id = :id
-     LIMIT 1'
-);
+    $stmt = $pdo->prepare(
+        'SELECT id, provider, provider_user_id, username, display_name, avatar_url
+         FROM users
+         WHERE id = :id
+         LIMIT 1'
+    );
 
-$stmt->execute([
-    ':id' => $userId,
-]);
-
-$user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-if (!$user) {
-    http_response_code(401);
-    echo json_encode([
-        'ok' => false,
-        'user' => null,
+    $stmt->execute([
+        ':id' => $userId,
     ]);
-    exit;
+
+    $user = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+} else {
+    $user = null;
 }
 
 echo json_encode([
-    'ok' => true,
+    'authenticated' => true,
     'user' => $user,
+    'developer_id' => $developerId,
 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);

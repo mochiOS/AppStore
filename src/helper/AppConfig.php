@@ -12,8 +12,18 @@ class AppConfig
             throw new RuntimeException('Invalid app environment.');
         }
 
-        return $config[$env] + [
-                'env' => $env,
-            ];
+        $shared = [];
+
+        foreach ($config as $key => $value) {
+            if ($key === 'env' || is_array($value)) {
+                continue;
+            }
+
+            $shared[$key] = $value;
+        }
+
+        return $config[$env] + $shared + [
+            'env' => $env,
+        ];
     }
 }

@@ -1,15 +1,15 @@
 <?php
 
-session_start();
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
 
 require_once __DIR__ . '/../../../helper/OAuth/Provider.php';
-require_once __DIR__ . '/../../../helper/OAuth/User.php';
 require_once __DIR__ . '/../../../helper/Database.php';
-require_once __DIR__ . '/../../../helper/Paths.php';
 require_once __DIR__ . '/../../../helper/AppConfig.php';
+require_once __DIR__ . '/../../../helper/DeveloperRepository.php';
 
 use OAuth\Provider;
-use OAuth\User;
 
 $provider = $_SESSION['oauth_provider'] ?? '';
 $expectedState = $_SESSION['oauth_state'] ?? '';
@@ -63,17 +63,18 @@ if (!$accessToken) {
 }
 
 $rawUser = oauthGet($config['user_url'], $accessToken);
-$userData = Provider::normalizeUser($provider, $rawUser);
-
-if (!$userData) {
+$providerSubject = Provider::subject($provider, $rawUser);
+if ($providerSubject === null) {
     http_response_code(401);
     echo 'Failed to get OAuth user';
     exit;
 }
 
-$user = User::findOrCreate($userData);
+$developers = new DeveloperRepository(Database::get());
+$developer = $developers->findOrCreateByOAuth($provider, $providerSubject);
 
-$_SESSION['user_id'] = (int)$user['id'];
+unset($_SESSION['user_id']);
+$_SESSION['developer_id'] = $developer['developer_id'];
 
 header('Location: ' . $appConfig['frontend_url'] . '/auth/callback');
 exit;

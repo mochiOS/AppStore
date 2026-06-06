@@ -72,4 +72,13 @@ class Provider
             default => null,
         };
     }
+
+    public static function subject(string $provider, array $raw): ?string
+    {
+        return match ($provider) {
+            'github', 'gitlab' => isset($raw['id']) ? (string) $raw['id'] : null,
+            'google' => isset($raw['sub']) ? (string) $raw['sub'] : null,
+            default => null,
+        };
+    }
 }

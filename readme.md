@@ -9,6 +9,7 @@ mochiOSのアプリバンドルの形式は[ここ](docs/appbundle.md)で定義�
 config/以下のすべてのphpファイルを指示に従って編集してください。
 
 開発者認証局の設計と API は [docs/developer-ca.md](docs/developer-ca.md) を参照してください。
+オフライン検証時の前提は [docs/appbundle.md](docs/appbundle.md) と [docs/developer-ca.md](docs/developer-ca.md) に追記しています。
 
 ## features
 - [ ] アプリバンドルの配布・公開

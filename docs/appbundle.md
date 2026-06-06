@@ -161,9 +161,23 @@ version 0.2.0
 - ハードリンク
 - デバイスファイル
 
+## 署名検証
+
+mochiOS はインストール時に以下を検証する想定である。
+
+1. パッケージの `sha256` を再計算する
+2. release metadata に含まれる署名を検証する
+3. 発行元証明書がストアの CA によって署名されているか確認する
+4. `bundle_id` が証明書の所有範囲に含まれるか確認する
+5. 証明書や開発者が失効済みでないか確認する
+
+オフライン時は、事前に同期した root CA / certificate / revocation 情報のみを使って既知の release を検証する。
+
 ## ストア連携
 
 ストアは`about.toml`を読み取り、アプリ情報として利用する。
+
+ストアは release metadata に `package_hash`、`signature`、`certificate_id` などの検証材料を含める。
 
 ## 予定
 

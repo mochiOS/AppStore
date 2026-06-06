@@ -13,12 +13,15 @@ mochiOS側は以下を行う想定である。
 1. `/v1/ca/root`でルートCA証明書を取得する
 2. リリースmetadataに含まれる証明書と署名を検証する
 3. 失効済み証明書や停止済み開発者を拒否する
+4. 必要な trust 情報を端末にキャッシュし、オフライン時はそのキャッシュで既知のアプリを検証する
 
 ## 信頼モデル
 
 - GitHub OAuthはログイン手段であり、署名の信頼根ではない
 - サーバーCAが「この公開鍵はこの開発者に発行した」と署名する
 - mochiOSはサーバーCAをtrust anchorとして扱う
+- オフライン時は「最後に同期した root CA / certificate / revocation snapshot」を使って既知の対象だけを検証する
+- 新しい証明書の取得や未同期の release の検証はオンライン時のみ許可する
 
 ## 追加テーブル
 
@@ -185,5 +188,22 @@ CSR を却下する。
 - release manifest の canonicalization
 - package 署名の実施
 - CRL/OCSP のようなオンライン失効配布
+- オフライン時の trust cache 配布 API
 
 これらは OS 側または release API 拡張で扱う。
+
+## オフライン運用
+
+オフライン対応を行う場合、mochiOS は以下の方針で動く。
+
+1. インストール済みまたは事前同期済みの release のみ検証する
+2. ルート CA 証明書と失効スナップショットは端末内に保持する
+3. 失効情報は「最後に同期した時点まで」を保証範囲とする
+4. 新しい release や新しい証明書はネットワーク復帰後に再同期する
+
+サーバー側は将来的に以下の同期 API を追加できる。
+
+- `GET /v1/sync/root-ca`
+- `GET /v1/sync/revocations`
+- `GET /v1/sync/certificates`
+- `GET /v1/sync/releases/{bundle_id}`

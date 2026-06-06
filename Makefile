@@ -16,7 +16,9 @@ clean:
 migrate:
 	@$(PHP) src/cli/migrate.php
 
+data: migrate
+
 test:
 	@$(PHP) src/tests/run.php
 
-.PHONY: run api public clean migrate test
+.PHONY: run api public clean data migrate test

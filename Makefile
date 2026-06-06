@@ -1,18 +1,14 @@
 PHP = php
-PUBLIC_PORT = 8000
-API_PORT = 8001
+PUBLIC_PORT = 3000
+API_PORT = 3001
 DATA_DIR = data
 
 run:
 	@mkdir -p $(DATA_DIR)
-	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php & \
-	cd src/public && npm run dev
+	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php
 
 api:
 	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php
-
-public:
-	@cd src/public && npm run dev
 	
 clean:
 	rm -rf $(DATA_DIR)/

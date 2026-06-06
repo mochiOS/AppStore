@@ -6,6 +6,9 @@ require_once __DIR__ . '/../../../helper/OAuth/Provider.php';
 require_once __DIR__ . '/../../../helper/OAuth/User.php';
 require_once __DIR__ . '/../../../helper/Database.php';
 
+use OAuth\Provider;
+use OAuth\User;
+
 $provider = $_SESSION['oauth_provider'] ?? '';
 $expectedState = $_SESSION['oauth_state'] ?? '';
 
@@ -26,7 +29,7 @@ if (!hash_equals($expectedState, $state)) {
 
 unset($_SESSION['oauth_state'], $_SESSION['oauth_provider']);
 
-$config = Oauth::class::ProviderHelper::get($provider);
+$config = Provider::get($provider);
 
 if (!$config) {
     http_response_code(400);
@@ -56,7 +59,7 @@ if (!$accessToken) {
 }
 
 $rawUser = oauthGet($config['user_url'], $accessToken);
-$userData = Oauth::class::ProviderHelper::normalizeUser($provider, $rawUser);
+$userData = Provider::normalizeUser($provider, $rawUser);
 
 if (!$userData) {
     http_response_code(401);
@@ -64,7 +67,7 @@ if (!$userData) {
     exit;
 }
 
-$user = Oauth::class::UserHelper::findOrCreate($userData);
+$user = User::findOrCreate($userData);
 
 $_SESSION['user_id'] = (int)$user['id'];
 

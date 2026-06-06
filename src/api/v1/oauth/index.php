@@ -55,7 +55,7 @@ $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
 
 $host = $_SERVER['HTTP_HOST'];
 
-$redirectUri = $scheme . '://' . $host . '/oauth/callback.php';
+$redirectUri = $scheme . '://' . $host . '/v1/oauth/callback.php';
 
 $params = [
     'client_id' => $oauthConfig[$provider]['client_id'],

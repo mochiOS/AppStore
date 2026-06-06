@@ -5,11 +5,15 @@ DATA_DIR = data
 
 run:
 	@mkdir -p $(DATA_DIR)
-	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php
+	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php & \
+	cd src/public && $(PHP) -S localhost:$(PUBLIC_PORT)
 
 api:
 	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php
-	
+
+public:
+	@cd src/public && $(PHP) -S localhost:$(PUBLIC_PORT)
+
 clean:
 	rm -rf $(DATA_DIR)/
 

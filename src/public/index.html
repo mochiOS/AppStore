@@ -1,10 +1,32 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>mochiOS Developer console</title>
+    <title>mochiOS Developer Console</title>
+    <script src="/common.js"></script>
 </head>
 <body>
+    <button onclick="login('github')">
+        Login with GitHub
+    </button>
 
+    <p id="username"></p>
+
+    <script>
+        async function init() {
+            const user = await showMe();
+
+            console.log(user);
+
+            if (!user) {
+                return;
+            }
+
+            document.getElementById("username").textContent =
+                user.display_name || user.username || "Unknown";
+        }
+
+        init();
+    </script>
 </body>
 </html>

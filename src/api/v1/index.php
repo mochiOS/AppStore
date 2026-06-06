@@ -12,6 +12,7 @@ require_once ROOT . 'helper/ReleaseRepository.php';
 require_once ROOT . 'helper/ApiResponse.php';
 require_once ROOT . 'helper/PackageStorage.php';
 require_once ROOT . 'helper/AppConfig.php';
+require_once ROOT . 'helper/Paths.php';
 
 $appConfig = AppConfig::get();
 

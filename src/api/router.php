@@ -18,7 +18,7 @@ if ($path === '/v1' || $path === '/v1/') {
     return true;
 }
 
-if (preg_match('#^/(?:v1/)?(?:apps|search)(?:/|$)#', $path)) {
+if (preg_match('#^/(?:v1/)?(?:apps|search|auth|oauth)(?:/|$)#', $path)) {
     require __DIR__ . '/v1/index.php';
     return true;
 }

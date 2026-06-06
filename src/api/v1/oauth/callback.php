@@ -75,7 +75,7 @@ $user = User::findOrCreate($userData);
 
 $_SESSION['user_id'] = (int)$user['id'];
 
-header('Location: /');
+header('Location: ' . $appConfig['frontend_url'] . '/auth/callback');
 exit;
 
 function oauthPost(string $url, array $params): array

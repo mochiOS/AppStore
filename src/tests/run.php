@@ -10,6 +10,8 @@ require_once __DIR__ . '/../helper/AppCatalog.php';
 require_once __DIR__ . '/../helper/ApiRequest.php';
 require_once __DIR__ . '/../helper/ApiResponse.php';
 require_once __DIR__ . '/../helper/PackageStorage.php';
+require_once __DIR__ . '/../helper/AppConfig.php';
+require_once __DIR__ . '/../helper/DeveloperRepository.php';
 
 require_once __DIR__ . '/Support.php';
 
@@ -40,6 +42,7 @@ require __DIR__ . '/../cli/migrate.php';
 ob_end_clean();
 
 require_once __DIR__ . '/PathsTest.php';
+require_once __DIR__ . '/DeveloperRepositoryTest.php';
 require_once __DIR__ . '/ApiTest.php';
 
 $failures = 0;
@@ -85,4 +88,3 @@ foreach ($results as $result) {
 }
 
 echo 'All tests passed' . PHP_EOL;
-

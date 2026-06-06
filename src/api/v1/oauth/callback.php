@@ -6,6 +6,7 @@ require_once __DIR__ . '/../../../helper/OAuth/Provider.php';
 require_once __DIR__ . '/../../../helper/OAuth/User.php';
 require_once __DIR__ . '/../../../helper/Database.php';
 require_once __DIR__ . '/../../../helper/Paths.php';
+require_once __DIR__ . '/../../../helper/AppConfig.php';
 
 use OAuth\Provider;
 use OAuth\User;
@@ -41,7 +42,9 @@ if (!$config) {
 $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
 $host = $_SERVER['HTTP_HOST'];
 
-$redirectUri = $scheme . '://' . $host . '/v1/oauth/callback.php';
+$appConfig = AppConfig::get();
+
+$redirectUri = $appConfig['api_url'] . '/v1/oauth/callback.php';
 
 $token = oauthPost($config['token_url'], [
     'client_id' => $config['client_id'],

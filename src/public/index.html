@@ -2,150 +2,333 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>mochiOS Developer Console</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
     <script src="/common.js"></script>
 </head>
 <body>
-    <h1>mochiOS Developer Console</h1>
 
-    <div>
-        <button class="isNotLogin" id="loginButton" type="button">
-            Login with GitHub
-        </button>
-        <button class="isLogin" id="logoutButton" type="button">
-            Logout
+<!-- login screen -->
+<div class="login-screen" id="loginScreen">
+    <div class="login-box">
+        <div class="login-icon">
+            <img src="resources/mochimochi-kun.svg" width="24" height="24" alt="mochiOS logo">
+        </div>
+        <div class="login-title">Developer Console</div>
+        <div class="login-sub">mochiOSのアプリ開発を始めるには<br>サインインしてください。</div>
+        <button class="btn-github" onclick="login('github')">
+            <img src="resources/GithubIcon.svg" alt="GitHub logo" width="24" height="24">
+            GitHubでサインイン
         </button>
     </div>
+</div>
 
-    <div>
-        <p>認証状態: <span id="loginState">確認中</span></p>
-        <p>Developer ID: <span id="developerId">-</span></p>
+<!-- ナビゲーション -->
+<nav>
+    <a class="nav-brand" href="#">
+        <img src="resources/mochimochi-kun.svg" width="20" height="20" alt="mochiOS logo">
+        mochiOS Developer console
+    </a>
+    <div class="nav-right">
+        <div class="nav-user" id="navUser" style="display:none">
+            <span class="nav-username" id="navUsername"></span>
+        </div>
+        <button class="btn btn-ghost btn-sm" id="logoutBtn" style="display:none" onclick="doLogout()">サインアウト</button>
     </div>
+</nav>
 
-    <hr>
-
-    <section>
-        <h2>Profile</h2>
-        <button id="showMeButton" type="button">GET /v1/auth/me</button>
-        <button id="showDeveloperButton" type="button">GET /v1/developers/me</button>
-    </section>
-
-    <section class="isLogin">
-        <h2>Public Keys</h2>
-        <div>
-            <label for="publicKeyInput"></label><textarea id="publicKeyInput" rows="6" cols="80">ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey mochios@example</textarea>
+<!-- レイアウト -->
+<div class="layout">
+    <aside class="sidebar">
+        <div class="sb-section">
+            <div class="sb-label">Overview</div>
+            <button class="sb-link active" data-page="profile" onclick="gotoPage(this,'profile')">
+                プロフィール
+            </button>
         </div>
-        <div>
-            <button id="createKeyButton" type="button">POST /v1/keys</button>
-            <button id="listKeysButton" type="button">GET /v1/keys</button>
+        <div class="sb-section">
+            <div class="sb-label">アプリ管理</div>
+            <button class="sb-link" data-page="keys" onclick="gotoPage(this,'keys')">
+                公開鍵
+            </button>
+            <button class="sb-link" data-page="bundles" onclick="gotoPage(this,'bundles')">
+                Bundle ID
+            </button>
         </div>
-        <div>
-            <label for="revokeKeyIdInput"></label><input id="revokeKeyIdInput" type="text" placeholder="key_id">
-            <button id="revokeKeyButton" type="button">POST /v1/keys/{key_id}/revoke</button>
+    </aside>
+
+    <main class="main">
+
+        <!-- PROFILE -->
+        <div class="page active" id="page-profile">
+            <div class="page-head">
+                <div class="page-title">プロフィール</div>
+                <div class="page-sub">アカウント情報を確認します。</div>
+            </div>
+
+            <div class="card" id="profileCard">
+                <div class="card-head">
+                    <div class="card-title">Developer Account</div>
+                </div>
+                <div class="info-grid" id="profileGrid">
+                    <div class="info-cell"><div class="info-cell-label">Developer ID</div><div class="info-cell-value" id="pd-devId">—</div></div>
+                    <div class="info-cell"><div class="info-cell-label">GitHub</div><div class="info-cell-value" id="pd-github">—</div></div>
+                    <div class="info-cell"><div class="info-cell-label">登録日</div><div class="info-cell-value" id="pd-created">—</div></div>
+                    <div class="info-cell"><div class="info-cell-label">ステータス</div><div class="info-cell-value" id="pd-status">—</div></div>
+                </div>
+            </div>
         </div>
-    </section>
 
-    <section class="isLogin">
-        <h2>Bundle IDs</h2>
-        <div>
-            <label for="bundleIdInput"></label><input id="bundleIdInput" type="text" value="org.mochios.example">
-            <label for="appNameInput"></label><input id="appNameInput" type="text" value="Example App">
+        <!-- KEYS -->
+        <div class="page" id="page-keys">
+            <div class="page-head">
+                <div class="page-title">公開鍵</div>
+                <div class="page-sub">SSH 公開鍵を登録して mochiOS への開発者アクセスを設定します。</div>
+            </div>
+
+            <!-- 登録フォーム -->
+            <div class="card">
+                <div class="card-head"><div class="card-title">新しい公開鍵を登録</div></div>
+                <div class="field">
+                    <div class="field-label">SSH 公開鍵</div>
+                    <textarea id="publicKeyInput" rows="3" placeholder="ssh-ed25519 AAAA..."></textarea>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-dark" onclick="doCreateKey()">登録する</button>
+                </div>
+            </div>
+
+            <!-- 鍵の一覧 -->
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">登録済みの公開鍵</div>
+                    <button class="btn btn-ghost btn-sm" onclick="loadKeys()">更新</button>
+                </div>
+                <div id="keyList"><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><div class="empty-text">公開鍵が登録されていません</div></div></div>
+            </div>
+
+            <!-- 失効フォーム -->
+            <div class="card">
+                <div class="card-head"><div class="card-title">公開鍵を失効させる</div></div>
+                <div class="inline-row">
+                    <div class="field">
+                        <div class="field-label">Key ID</div>
+                        <input id="revokeKeyIdInput" type="text" placeholder="key_xxxxxxxxxxxxx">
+                    </div>
+                    <button class="btn btn-danger" style="flex-shrink:0;margin-bottom:1px" onclick="doRevokeKey()">失効</button>
+                </div>
+            </div>
         </div>
-        <div>
-            <button id="createBundleIdButton" type="button">POST /v1/bundle-ids</button>
-            <button id="listBundleIdsButton" type="button">GET /v1/bundle-ids</button>
+
+        <!-- BUNDLES -->
+        <div class="page" id="page-bundles">
+            <div class="page-head">
+                <div class="page-title">Bundle ID</div>
+                <div class="page-sub">アプリケーションの Bundle ID を登録・管理します。</div>
+            </div>
+
+            <!-- 登録フォーム -->
+            <div class="card">
+                <div class="card-head"><div class="card-title">新しい Bundle ID を登録</div></div>
+                <div class="field-row">
+                    <div class="field">
+                        <div class="field-label">Bundle ID</div>
+                        <input id="bundleIdInput" type="text" placeholder="org.example.myapp">
+                    </div>
+                    <div class="field">
+                        <div class="field-label">アプリ名</div>
+                        <input id="appNameInput" type="text" placeholder="My App">
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-dark" onclick="doCreateBundle()">登録する</button>
+                </div>
+            </div>
+
+            <!-- 一覧 -->
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">登録済みの Bundle ID</div>
+                    <button class="btn btn-ghost btn-sm" onclick="loadBundles()">更新</button>
+                </div>
+                <div id="bundleList"><div class="empty"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg><div class="empty-text">Bundle ID が登録されていません</div></div></div>
+            </div>
         </div>
-    </section>
 
-    <hr>
+    </main>
+</div>
 
-    <section>
-        <h2>Response</h2>
-        <pre id="output"></pre>
-    </section>
+<div class="toast" id="toast"></div>
 
-    <script>
-        const output = document.getElementById("output");
-        const loginState = document.getElementById("loginState");
-        const developerId = document.getElementById("developerId");
+<script>
+// ── ナビゲーション ───────────────────────────
+function gotoPage(el, page) {
+    document.querySelectorAll('.sb-link').forEach(l => l.classList.remove('active'));
+    el.classList.add('active');
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + page).classList.add('active');
+    if (page === 'keys')    loadKeys();
+    if (page === 'bundles') loadBundles();
+}
 
-        function renderJson(value) {
-            output.textContent = JSON.stringify(value, null, 2);
-        }
+// ── トースト ────────────────────────────────
+function toast(msg, isErr) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.background = isErr ? '#e53935' : 'var(--black)';
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2800);
+}
 
-        async function refreshAuthSummary() {
-            const auth = await showMe();
-            const currentDeveloperId = auth && auth.developer_id
-                ? auth.developer_id
-                : "-";
+// ── 認証・プロフィール ────────────────────────
+async function init() {
+    const auth = await showMe();
 
-            loginState.textContent = auth ? "logged in" : "not logged in";
-            developerId.textContent = currentDeveloperId;
+    if (!auth || !auth.developer_id) {
+        document.getElementById('loginScreen').classList.add('show');
+        return;
+    }
 
-            return auth;
-        }
+    // ナビ表示
+    const navUser = document.getElementById('navUser');
+    const navUsername = document.getElementById('navUsername');
+    const navAvatar = document.getElementById('navAvatar');
+    navUser.style.display = 'flex';
+    document.getElementById('logoutBtn').style.display = '';
 
-        async function handleRequest(callback) {
-            try {
-                const result = await callback();
-                renderJson(result);
-            } catch (error) {
-                renderJson({
-                    error: error.message
-                });
-            }
-        }
+    // GitHubユーザー名・アバターを取得
+    const dev = await showDeveloper();
+    const githubLogin = dev && dev.github_login ? dev.github_login
+                      : dev && dev.username    ? dev.username
+                      : auth.developer_id;
+    navUsername.textContent = githubLogin;
 
-        async function init() {
-            document.getElementById("loginButton").addEventListener("click", () => {
-                login("github");
-            });
+    // GitHubアバター
+    if (githubLogin && githubLogin !== auth.developer_id) {
+        const img = document.createElement('img');
+        img.src = `https://github.com/${githubLogin}.png?size=56`;
+        img.alt = githubLogin;
+        navAvatar.innerHTML = '';
+        navAvatar.appendChild(img);
+    }
 
-            document.getElementById("logoutButton").addEventListener("click", () => {
-                logout();
-            });
+    // プロフィールカード
+    document.getElementById('pd-devId').textContent   = auth.developer_id || '—';
+    document.getElementById('pd-github').textContent  = githubLogin || '—';
+    document.getElementById('pd-created').textContent =
+        dev && dev.created_at ? new Date(dev.created_at).toLocaleDateString('ja-JP') : '—';
+    document.getElementById('pd-status').textContent  = 'Active';
+}
 
-            document.getElementById("showMeButton").addEventListener("click", async () => {
-                await handleRequest(showMe);
-                await refreshAuthSummary();
-                await updateLoginState();
-            });
+// ── 公開鍵 ──────────────────────────────────
+async function loadKeys() {
+    const r = await listKeys();
+    const keys = r && r.data
+        ? (Array.isArray(r.data) ? r.data : r.data.keys || [])
+        : [];
+    const el = document.getElementById('keyList');
 
-            document.getElementById("showDeveloperButton").addEventListener("click", async () => {
-                await handleRequest(showDeveloper);
-                await refreshAuthSummary();
-                await updateLoginState();
-            });
+    if (!keys.length) {
+        el.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg><div class="empty-text">公開鍵が登録されていません</div></div>';
+        return;
+    }
 
-            document.getElementById("createKeyButton").addEventListener("click", async () => {
-                const publicKey = document.getElementById("publicKeyInput").value;
-                await handleRequest(() => createKey(publicKey));
-            });
+    el.innerHTML = keys.map(k => {
+        const id = k.key_id || k.id || '';
+        const preview = (k.public_key || k.key || '').slice(0, 48) + '…';
+        const date = k.created_at ? new Date(k.created_at).toLocaleDateString('ja-JP') : '';
+        return `<div class="list-item">
+            <div class="item-main">
+                <div class="item-title">${preview}</div>
+                <div class="item-sub">${id}</div>
+                ${date ? `<div class="item-meta">${date} 登録</div>` : ''}
+            </div>
+            <button class="btn btn-danger btn-sm" onclick="quickRevoke('${id}')">失効</button>
+        </div>`;
+    }).join('');
+}
 
-            document.getElementById("listKeysButton").addEventListener("click", async () => {
-                await handleRequest(listKeys);
-            });
+async function doCreateKey() {
+    const pk = document.getElementById('publicKeyInput').value.trim();
+    if (!pk) { toast('公開鍵を入力してください', true); return; }
+    const r = await createKey(pk);
+    if (r && r.ok) {
+        toast('公開鍵を登録しました');
+        document.getElementById('publicKeyInput').value = '';
+        await loadKeys();
+    } else {
+        toast('登録に失敗しました', true);
+    }
+}
 
-            document.getElementById("revokeKeyButton").addEventListener("click", async () => {
-                const keyId = document.getElementById("revokeKeyIdInput").value.trim();
-                await handleRequest(() => revokeKey(keyId));
-            });
+async function doRevokeKey() {
+    const id = document.getElementById('revokeKeyIdInput').value.trim();
+    if (!id) { toast('Key ID を入力してください', true); return; }
+    const r = await revokeKey(id);
+    if (r && r.ok) {
+        toast('公開鍵を失効させました');
+        document.getElementById('revokeKeyIdInput').value = '';
+        await loadKeys();
+    } else {
+        toast('失効に失敗しました', true);
+    }
+}
 
-            document.getElementById("createBundleIdButton").addEventListener("click", async () => {
-                const bundleId = document.getElementById("bundleIdInput").value.trim();
-                const appName = document.getElementById("appNameInput").value.trim();
-                await handleRequest(() => createBundleId(bundleId, appName));
-            });
+async function quickRevoke(id) {
+    if (!confirm(`この公開鍵を失効させますか？\n${id}`)) return;
+    const r = await revokeKey(id);
+    if (r && r.ok) { toast('公開鍵を失効させました'); await loadKeys(); }
+    else toast('失効に失敗しました', true);
+}
 
-            document.getElementById("listBundleIdsButton").addEventListener("click", async () => {
-                await handleRequest(listBundleIds);
-            });
+// ── Bundle ID ───────────────────────────────
+async function loadBundles() {
+    const r = await listBundleIds();
+    const items = r && r.data
+        ? (Array.isArray(r.data) ? r.data : r.data.bundle_ids || [])
+        : [];
+    const el = document.getElementById('bundleList');
 
-            await refreshAuthSummary();
-            await updateLoginState();
-        }
+    if (!items.length) {
+        el.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg><div class="empty-text">Bundle ID が登録されていません</div></div>';
+        return;
+    }
 
-        init();
-    </script>
+    el.innerHTML = items.map(b => `
+        <div class="list-item">
+            <div class="bicon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg></div>
+            <div class="item-main">
+                <div class="item-title">${b.app_name || '—'}</div>
+                <div class="item-sub">${b.bundle_id || ''}</div>
+            </div>
+            <span class="badge badge-green">Active</span>
+        </div>
+    `).join('');
+}
+
+async function doCreateBundle() {
+    const bid  = document.getElementById('bundleIdInput').value.trim();
+    const name = document.getElementById('appNameInput').value.trim();
+    if (!bid || !name) { toast('Bundle ID とアプリ名を入力してください', true); return; }
+    const r = await createBundleId(bid, name);
+    if (r && r.ok) {
+        toast('Bundle ID を登録しました');
+        document.getElementById('bundleIdInput').value = '';
+        document.getElementById('appNameInput').value  = '';
+        await loadBundles();
+    } else {
+        toast('登録に失敗しました', true);
+    }
+}
+
+// ── サインアウト ─────────────────────────────
+async function doLogout() {
+    await logout();
+}
+
+init();
+</script>
 </body>
 </html>

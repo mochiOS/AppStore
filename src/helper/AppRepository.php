@@ -3,7 +3,7 @@
 class AppRepository
 {
     public function __construct(
-        private PDO $db
+        private readonly PDO $db
     ) {}
 
     public function findAll(int $limit = 50, int $offset = 0): array
@@ -67,4 +67,4 @@ class AppRepository
     }
 }
 
-?>
+

@@ -24,4 +24,4 @@ $storage->ensurePlaceholderPackage(
 
 echo "Migration complete\n";
 
-?>
+

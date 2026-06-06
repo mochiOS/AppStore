@@ -77,7 +77,7 @@ switch (true) {
         if (!is_file($packagePath)) {
             $storage->ensurePlaceholderPackage(
                 $release['download_path'],
-                "mochiOS placeholder package for {$bundleId} {$release['version']}\n"
+                "mochiOS placeholder package for $bundleId {$release['version']}\n"
             );
         }
 
@@ -120,4 +120,4 @@ echo json_encode([
     ],
 ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
-?>
+

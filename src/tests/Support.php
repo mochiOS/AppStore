@@ -67,4 +67,4 @@ function apiRequest(string $path, array $query = [], string $method = 'GET'): ar
     ];
 }
 
-?>
+

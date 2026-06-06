@@ -3,8 +3,8 @@
 class AppCatalog
 {
     public function __construct(
-        private AppRepository $appRepo,
-        private ReleaseRepository $releaseRepo
+        private readonly AppRepository     $appRepo,
+        private readonly ReleaseRepository $releaseRepo
     ) {}
 
     public function listApps(int $limit, int $offset): array
@@ -63,4 +63,4 @@ class AppCatalog
     }
 }
 
-?>
+

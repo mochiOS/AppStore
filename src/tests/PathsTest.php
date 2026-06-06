@@ -26,4 +26,4 @@ it('uses APPSTORE_DATA_DIR when set', function (): void {
     }
 });
 
-?>
+

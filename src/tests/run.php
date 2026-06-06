@@ -1,5 +1,7 @@
 <?php
 
+use Random\RandomException;
+
 require_once __DIR__ . '/../helper/Paths.php';
 require_once __DIR__ . '/../helper/Database.php';
 require_once __DIR__ . '/../helper/AppRepository.php';
@@ -11,7 +13,13 @@ require_once __DIR__ . '/../helper/PackageStorage.php';
 
 require_once __DIR__ . '/Support.php';
 
-$tempDataDir = sys_get_temp_dir() . '/appstore-tests-' . getmypid() . '-' . bin2hex(random_bytes(4));
+try {
+    $tempDataDir = sys_get_temp_dir() . '/appstore-tests-' . getmypid() . '-' . bin2hex(random_bytes(4));
+} catch (RandomException $e) {
+    http_response_code(500);
+    echo 'Failed to generate temporary data directory.';
+    exit;
+}
 if (!mkdir($tempDataDir, 0777, true) && !is_dir($tempDataDir)) {
     throw new RuntimeException('Failed to create temp data dir: ' . $tempDataDir);
 }
@@ -71,4 +79,4 @@ foreach ($results as $result) {
 
 echo 'All tests passed' . PHP_EOL;
 
-?>
+

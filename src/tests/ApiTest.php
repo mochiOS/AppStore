@@ -43,4 +43,4 @@ it('returns release not found for missing release', function (): void {
     assertSame('RELEASE_NOT_FOUND', $payload['error']['code']);
 });
 
-?>
+

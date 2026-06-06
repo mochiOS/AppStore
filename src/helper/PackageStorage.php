@@ -3,7 +3,7 @@
 class PackageStorage
 {
     public function __construct(
-        private string $root
+        private readonly string $root
     ) {}
 
     public function absolutePath(string $relativePath): string
@@ -37,4 +37,4 @@ class PackageStorage
     }
 }
 
-?>
+

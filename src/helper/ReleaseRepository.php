@@ -3,7 +3,7 @@
 class ReleaseRepository
 {
     public function __construct(
-        private PDO $db
+        private readonly PDO $db
     ) {}
 
     public function findAllByBundleId(string $bundleId): array
@@ -81,4 +81,4 @@ class ReleaseRepository
     }
 }
 
-?>
+

@@ -6,7 +6,7 @@ session_start();
 
 require_once __DIR__ . '/../../../helper/Paths.php';
 
-$oauthConfig = require  '../../../../config/oauth.php';
+$oauthConfig = require __DIR__ . '/../../../../config/oauth.php';
 
 $provider = $_GET['provider'] ?? 'github';
 

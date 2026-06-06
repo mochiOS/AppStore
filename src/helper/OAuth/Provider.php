@@ -6,26 +6,22 @@ class Provider
 {
     public static function get(string $provider): ?array
     {
+        $secrets = require __DIR__ . '/../../../config/oauth.php';
+
         $providers = [
             'github' => [
-                'client_id' => getenv('GITHUB_CLIENT_ID'),
-                'client_secret' => getenv('GITHUB_CLIENT_SECRET'),
                 'auth_url' => 'https://github.com/login/oauth/authorize',
                 'token_url' => 'https://github.com/login/oauth/access_token',
                 'user_url' => 'https://api.github.com/user',
                 'scope' => 'read:user',
             ],
             'gitlab' => [
-                'client_id' => getenv('GITLAB_CLIENT_ID'),
-                'client_secret' => getenv('GITLAB_CLIENT_SECRET'),
                 'auth_url' => 'https://gitlab.com/oauth/authorize',
                 'token_url' => 'https://gitlab.com/oauth/token',
                 'user_url' => 'https://gitlab.com/api/v4/user',
                 'scope' => 'read_user',
             ],
             'google' => [
-                'client_id' => getenv('GOOGLE_CLIENT_ID'),
-                'client_secret' => getenv('GOOGLE_CLIENT_SECRET'),
                 'auth_url' => 'https://accounts.google.com/o/oauth2/v2/auth',
                 'token_url' => 'https://oauth2.googleapis.com/token',
                 'user_url' => 'https://openidconnect.googleapis.com/v1/userinfo',
@@ -33,13 +29,13 @@ class Provider
             ],
         ];
 
-        if (!isset($providers[$provider])) {
+        if (!isset($providers[$provider], $secrets[$provider])) {
             return null;
         }
 
-        $config = $providers[$provider];
+        $config = array_merge($providers[$provider], $secrets[$provider]);
 
-        if (!$config['client_id'] || !$config['client_secret']) {
+        if (empty($config['client_id']) || empty($config['client_secret'])) {
             return null;
         }
 

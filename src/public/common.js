@@ -19,8 +19,19 @@ async function showMe() {
         return null;
     }
 
-    const data = await res.json();
-    return data.user;
+    return res.json();
+}
+
+async function showDeveloper() {
+    const res = await fetch(`${window.APP_CONFIG.API_URL}/v1/developers/me`, {
+        credentials: "include"
+    });
+
+    if (!res.ok) {
+        return null;
+    }
+
+    return res.json();
 }
 
 async function logout() {
@@ -44,13 +55,16 @@ async function logout() {
 }
 
 async function updateLoginState() {
-    const user = await showMe();
+    const auth = await showMe();
+    const isLoggedIn = Boolean(auth && (auth.developer_id || auth.user));
 
     document.querySelectorAll(".isLogin").forEach(element => {
-        element.style.display = user ? "" : "none";
+        element.style.display = isLoggedIn ? "" : "none";
     });
 
     document.querySelectorAll(".isNotLogin").forEach(element => {
-        element.style.display = user ? "none" : "";
+        element.style.display = isLoggedIn ? "none" : "";
     });
-}   updateLoginState().then(() => {});
+}
+
+updateLoginState().then(() => {});

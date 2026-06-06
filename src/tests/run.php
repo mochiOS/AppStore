@@ -24,6 +24,13 @@ if (!mkdir($tempDataDir, 0777, true) && !is_dir($tempDataDir)) {
     throw new RuntimeException('Failed to create temp data dir: ' . $tempDataDir);
 }
 
+$tempSessionDir = $tempDataDir . '/sessions';
+if (!mkdir($tempSessionDir, 0777, true) && !is_dir($tempSessionDir)) {
+    throw new RuntimeException('Failed to create temp session dir: ' . $tempSessionDir);
+}
+
+session_save_path($tempSessionDir);
+
 $originalDataDir = getenv('APPSTORE_DATA_DIR');
 putenv('APPSTORE_DATA_DIR=' . $tempDataDir);
 Database::reset();
@@ -78,5 +85,4 @@ foreach ($results as $result) {
 }
 
 echo 'All tests passed' . PHP_EOL;
-
 

@@ -51,20 +51,40 @@ function decodeJson(string $json): array
 
 function apiRequest(string $path, array $query = [], string $method = 'GET'): array
 {
+    return apiJsonRequest($path, $query, $method, null, []);
+}
+
+function apiJsonRequest(
+    string $path,
+    array $query = [],
+    string $method = 'GET',
+    ?array $jsonBody = null,
+    array $session = []
+): array {
     $_SERVER['REQUEST_METHOD'] = $method;
     $_SERVER['REQUEST_URI'] = $path . ($query === [] ? '' : '?' . http_build_query($query));
     $_GET = $query;
+    $_POST = [];
+
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        session_start();
+    }
+
+    $_SESSION = $session;
+    $GLOBALS['APPSTORE_TEST_INPUT'] = $jsonBody === null
+        ? null
+        : json_encode($jsonBody, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
     http_response_code(200);
     ob_start();
     require __DIR__ . '/../api/v1/index.php';
     $body = ob_get_clean();
     $status = http_response_code();
+    unset($GLOBALS['APPSTORE_TEST_INPUT']);
 
     return [
         'status' => $status === false ? 200 : $status,
         'body' => (string) $body,
     ];
 }
-
 

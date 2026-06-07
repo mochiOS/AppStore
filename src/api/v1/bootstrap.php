@@ -50,7 +50,6 @@ $db = Database::get();
 
 $appRepo = new AppRepository($db);
 $releaseRepo = new ReleaseRepository($db);
-
 return new ApiContext(
     path: ApiRequest::path(),
     method: $method,
@@ -59,6 +58,8 @@ return new ApiContext(
     releaseRepo: $releaseRepo,
     appCatalog: new AppCatalog($appRepo, $releaseRepo),
     developerRepo: new DeveloperRepository($db),
+    publicKeyRepo: new PublicKeyRepository($db),
+    bundleIdRepo: new BundleIdRepository($db),
     certificateRepo: new DeveloperCertificateRepository($db),
     certificateAuthority: CertificateAuthority::fromAppConfig($appConfig),
     storage: new PackageStorage(ROOT),

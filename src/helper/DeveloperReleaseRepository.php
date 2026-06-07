@@ -135,7 +135,10 @@ class DeveloperReleaseRepository
         ?string $manifestHash,
         string $packageHash,
         ?string $signature,
-        ?string $certificateId
+        ?string $certificateId,
+        string $packagePath,
+        int $packageSize,
+        ?string $changelog
     ): ?array {
         if (!$this->bundleIsOwnedByDeveloper($bundleId, $developerId)) {
             return null;
@@ -146,26 +149,32 @@ class DeveloperReleaseRepository
 
         $stmt = $this->db->prepare(
             'INSERT INTO developer_releases (
-                release_id,
-                bundle_id,
-                version,
-                manifest_hash,
-                package_hash,
-                signature,
-                certificate_id,
-                status,
-                created_at
-            ) VALUES (
-                :release_id,
-                :bundle_id,
-                :version,
-                :manifest_hash,
-                :package_hash,
-                :signature,
-                :certificate_id,
-                :status,
-                :created_at
-            )'
+            release_id,
+            bundle_id,
+            version,
+            manifest_hash,
+            package_hash,
+            signature,
+            certificate_id,
+            status,
+            created_at,
+            package_path,
+            package_size,
+            changelog
+        ) VALUES (
+            :release_id,
+            :bundle_id,
+            :version,
+            :manifest_hash,
+            :package_hash,
+            :signature,
+            :certificate_id,
+            :status,
+            :created_at,
+            :package_path,
+            :package_size,
+            :changelog
+        )'
         );
 
         $stmt->execute([
@@ -178,6 +187,9 @@ class DeveloperReleaseRepository
             ':certificate_id' => $certificateId,
             ':status' => 'draft',
             ':created_at' => $createdAt,
+            ':package_path' => $packagePath,
+            ':package_size' => $packageSize,
+            ':changelog' => $changelog,
         ]);
 
         return $this->findOwnedById($releaseId, $developerId);
@@ -197,12 +209,14 @@ class DeveloperReleaseRepository
 
         $stmt = $this->db->prepare(
             'UPDATE developer_releases
-             SET status = :status
-             WHERE release_id = :release_id'
+        SET status = :status,
+        submitted_at = :submitted_at
+        WHERE release_id = :release_id'
         );
 
         $stmt->execute([
             ':status' => 'submitted',
+            ':submitted_at' => date('c'),
             ':release_id' => $releaseId,
         ]);
 

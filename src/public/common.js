@@ -161,7 +161,7 @@ async function getDeveloperApp(bundleId) {
     return apiFetch(`/v1/developer/apps/${encodeURIComponent(bundleId)}`);
 }
 
-async function createDeveloperApp(bundleId, displayName, description = "", iconPath = "") {
+async function createDeveloperApp(bundleId, displayName, description = "") {
     return apiFetch("/v1/developer/apps", {
         method: "POST",
         headers: {
@@ -170,8 +170,7 @@ async function createDeveloperApp(bundleId, displayName, description = "", iconP
         body: JSON.stringify({
             bundle_id: bundleId,
             display_name: displayName,
-            description,
-            icon_path: iconPath
+            description
         })
     });
 }

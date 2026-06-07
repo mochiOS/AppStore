@@ -119,11 +119,6 @@
                     <label for="appDescriptionInput"></label><textarea id="appDescriptionInput" rows="3" placeholder="アプリの説明"></textarea>
                 </div>
 
-                <div class="field">
-                    <div class="field-label">アイコンパス</div>
-                    <label for="appIconPathInput"></label><input id="appIconPathInput" type="text" placeholder="assets/icon.png">
-                </div>
-
                 <div class="btn-row">
                     <button class="btn btn-dark" onclick="doCreateApp()">作成する</button>
                 </div>
@@ -372,7 +367,6 @@
         const bundleId = document.getElementById('appBundleIdInput').value.trim();
         const displayName = document.getElementById('appDisplayNameInput').value.trim();
         const description = document.getElementById('appDescriptionInput').value.trim();
-        const iconPath = document.getElementById('appIconPathInput').value.trim();
 
         if (!bundleId || !displayName) {
             toast('Bundle IDと表示名を入力してください', true);
@@ -382,8 +376,7 @@
         const result = await createDeveloperApp(
             bundleId,
             displayName,
-            description,
-            iconPath
+            description
         );
 
         if (result && result.ok) {
@@ -392,7 +385,6 @@
             document.getElementById('appBundleIdInput').value = '';
             document.getElementById('appDisplayNameInput').value = '';
             document.getElementById('appDescriptionInput').value = '';
-            document.getElementById('appIconPathInput').value = '';
 
             await loadApps();
             return;

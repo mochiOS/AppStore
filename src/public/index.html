@@ -51,12 +51,16 @@
             <button class="sb-link" data-page="apps" onclick="gotoPage(this, 'apps')">
                 アプリ
             </button>
+            <button class="sb-link" data-page="releases" onclick="gotoPage(this, 'releases')">
+                リリース
+            </button>
             <button class="sb-link" data-page="keys" onclick="gotoPage(this, 'keys')">
                 公開鍵
             </button>
             <button class="sb-link" data-page="bundles" onclick="gotoPage(this, 'bundles')">
                 Bundle ID
             </button>
+
         </div>
     </aside>
 
@@ -145,6 +149,65 @@
             </div>
         </div>
 
+        <div class="page" id="page-releases">
+            <div class="page-head">
+                <div class="page-title">リリース</div>
+                <div class="page-sub">署名済み.pkgをアップロードして、アプリのリリースを作成します。</div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">リリース対象アプリ</div>
+                    <button class="btn btn-ghost btn-sm" onclick="loadReleaseAppOptions()">更新</button>
+                </div>
+
+                <div class="field">
+                    <div class="field-label">アプリ</div>
+                    <label for="releaseAppSelect"></label><select id="releaseAppSelect" onchange="loadReleases()">
+                        <option value="">アプリを選択してください</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">新しいリリースをアップロード</div>
+                </div>
+
+                <div class="field">
+                    <div class="field-label">パッケージ</div>
+                    <input id="releasePackageInput" type="file" accept=".pkg,application/gzip,application/x-tar">
+                </div>
+
+                <div class="field">
+                    <div class="field-label">変更内容</div>
+                    <label for="releaseChangelogInput"></label><textarea id="releaseChangelogInput" rows="4" placeholder="このリリースでの変更点"></textarea>
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn btn-dark" onclick="doUploadRelease()">アップロード</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">リリース一覧</div>
+                    <button class="btn btn-ghost btn-sm" onclick="loadReleases()">更新</button>
+                </div>
+
+                <div id="releaseList">
+                    <div class="empty">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M12 3v12"/>
+                            <path d="M8 11l4 4 4-4"/>
+                            <path d="M4 19h16"/>
+                        </svg>
+                        <div class="empty-text">リリースがありません</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="page" id="page-keys">
             <div class="page-head">
                 <div class="page-title">公開鍵</div>
@@ -171,9 +234,7 @@
                 </div>
                 <div id="keyList">
                     <div class="empty">
-                        <svg viewBox="0 0 24 24">
-                            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
-                        </svg>
+                        <img src="resources/key.svg">
                         <div class="empty-text">公開鍵が登録されていません</div>
                     </div>
                 </div>
@@ -310,6 +371,10 @@
 
         if (page === 'bundles') {
             loadBundles();
+        }
+
+        if (page === 'releases') {
+            loadReleaseAppOptions();
         }
     }
 
@@ -608,6 +673,184 @@
         }
 
         const message = result?.data?.error?.message || '登録に失敗しました';
+        toast(message, true);
+    }
+
+    function openReleasesPage(bundleId) {
+        const button = document.querySelector('.sb-link[data-page="releases"]');
+
+        if (!button) {
+            return;
+        }
+
+        gotoPage(button, 'releases');
+
+        setTimeout(() => {
+            const select = document.getElementById('releaseAppSelect');
+
+            if (select) {
+                select.value = bundleId;
+                loadReleases();
+            }
+        }, 0);
+    }
+
+    async function loadReleaseAppOptions() {
+        const select = document.getElementById('releaseAppSelect');
+
+        if (!select) {
+            return;
+        }
+
+        const current = select.value;
+        const result = await listDeveloperApps();
+        const apps = result && result.data
+            ? (Array.isArray(result.data) ? result.data : result.data.apps || [])
+            : [];
+
+        if (!result || !result.ok) {
+            select.innerHTML = '<option value="">アプリを取得できませんでした</option>';
+            await loadReleases();
+            return;
+        }
+
+        if (!apps.length) {
+            select.innerHTML = '<option value="">登録済みアプリがありません</option>';
+            await loadReleases();
+            return;
+        }
+
+        select.innerHTML = [
+            '<option value="">アプリを選択してください</option>',
+            ...apps.map(app => {
+                const bundleId = escapeHtml(app.bundle_id || '');
+                const name = escapeHtml(app.display_name || app.app_name || app.bundle_id || '');
+
+                return `<option value="${bundleId}">${name} — ${bundleId}</option>`;
+            })
+        ].join('');
+
+        if (current && [...select.options].some(option => option.value === current)) {
+            select.value = current;
+        }
+
+        await loadReleases();
+    }
+
+    async function loadReleases() {
+        const select = document.getElementById('releaseAppSelect');
+        const list = document.getElementById('releaseList');
+
+        if (!select || !list) {
+            return;
+        }
+
+        const bundleId = select.value;
+
+        if (!bundleId) {
+            list.innerHTML = '<div class="empty"><div class="empty-text">アプリを選択してください</div></div>';
+            return;
+        }
+
+        const result = await listDeveloperReleases(bundleId);
+        const releases = result && result.data
+            ? (Array.isArray(result.data) ? result.data : result.data.releases || [])
+            : [];
+
+        if (!result || !result.ok) {
+            list.innerHTML = '<div class="empty"><div class="empty-text">リリース一覧を取得できませんでした</div></div>';
+            return;
+        }
+
+        if (!releases.length) {
+            list.innerHTML = '<div class="empty"><div class="empty-text">リリースがありません</div></div>';
+            return;
+        }
+
+        list.innerHTML = releases.map(release => {
+            const releaseId = escapeHtml(release.release_id || '');
+            const version = escapeHtml(release.version || '—');
+            const status = escapeHtml(release.status || 'draft');
+            const packageSize = Number(release.package_size || 0);
+            const createdAt = release.created_at
+                ? new Date(release.created_at).toLocaleDateString('ja-JP')
+                : '';
+            const sizeText = packageSize > 0
+                ? `${Math.ceil(packageSize / 1024)} KiB`
+                : 'size unknown';
+
+            const canSubmit = status === 'draft' || status === 'rejected';
+
+            return `
+                <div class="list-item">
+                <div class="bicon">
+                <svg viewBox="0 0 24 24">
+                <rect x="4" y="4" width="16" height="16" rx="3"/>
+                <path d="M8 9h8M8 13h5"/>
+                </svg>
+        </div>
+            <div class="item-main">
+                <div class="item-title">${name}</div>
+                <div class="item-sub">${bundleId}</div>
+                <div class="item-meta">version: ${version}</div>
+            </div>
+            <span class="badge ${visibility === 'public' ? 'badge-green' : 'badge-gray'}">${visibility}</span>
+            <button class="btn btn-ghost btn-sm" onclick="openReleasesPage('${bundleId}')">リリース</button>
+        </div>
+        `;
+        }).join('');
+    }
+
+    async function doUploadRelease() {
+        const bundleId = document.getElementById('releaseAppSelect').value;
+        const fileInput = document.getElementById('releasePackageInput');
+        const changelog = document.getElementById('releaseChangelogInput').value.trim();
+
+        if (!bundleId) {
+            toast('アプリを選択してください', true);
+            return;
+        }
+
+        if (!fileInput.files || fileInput.files.length === 0) {
+            toast('.pkgファイルを選択してください', true);
+            return;
+        }
+
+        const result = await uploadDeveloperRelease(
+            bundleId,
+            fileInput.files[0],
+            changelog
+        );
+
+        if (result && result.ok) {
+            toast('リリースをアップロードしました');
+
+            fileInput.value = '';
+            document.getElementById('releaseChangelogInput').value = '';
+
+            await loadReleases();
+            await loadApps();
+            return;
+        }
+
+        const message = result?.data?.error?.message || 'アップロードに失敗しました';
+        toast(message, true);
+    }
+
+    async function doSubmitRelease(releaseId) {
+        if (!confirm('このリリースを審査に提出しますか？')) {
+            return;
+        }
+
+        const result = await submitDeveloperRelease(releaseId);
+
+        if (result && result.ok) {
+            toast('リリースを提出しました');
+            await loadReleases();
+            return;
+        }
+
+        const message = result?.data?.error?.message || '提出に失敗しました';
         toast(message, true);
     }
 

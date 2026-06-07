@@ -175,6 +175,35 @@ async function createDeveloperApp(bundleId, displayName, description = "") {
     });
 }
 
+async function listDeveloperReleases(bundleId) {
+    return apiFetch(`/v1/developer/apps/${encodeURIComponent(bundleId)}/releases`);
+}
+
+async function uploadDeveloperRelease(bundleId, packageFile, changelog = "") {
+    const form = new FormData();
+
+    form.append("package", packageFile);
+
+    if (changelog !== "") {
+        form.append("changelog", changelog);
+    }
+
+    return apiFetch(`/v1/developer/apps/${encodeURIComponent(bundleId)}/releases`, {
+        method: "POST",
+        body: form
+    });
+}
+
+async function getDeveloperRelease(releaseId) {
+    return apiFetch(`/v1/developer/releases/${encodeURIComponent(releaseId)}`);
+}
+
+async function submitDeveloperRelease(releaseId) {
+    return apiFetch(`/v1/developer/releases/${encodeURIComponent(releaseId)}/submit`, {
+        method: "POST"
+    });
+}
+
 async function logout() {
     try {
         const response = await apiFetch("/v1/auth/logout", {

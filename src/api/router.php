@@ -33,7 +33,6 @@ if ($path === '/' || $path === '/index.html') {
 }
 
 if ($path === '/v1' || $path === '/v1/') {
-    readfile(__DIR__ . '/v1/index.html');
     return true;
 }
 

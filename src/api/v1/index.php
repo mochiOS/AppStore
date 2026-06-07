@@ -5,6 +5,7 @@ $context = require __DIR__ . '/bootstrap.php';
 
 $routes = [
     require __DIR__ . '/routes/public_apps.php',
+    require __DIR__ . '/routes/oauth.php',
     require __DIR__ . '/routes/auth.php',
     require __DIR__ . '/routes/keys.php',
     require __DIR__ . '/routes/bundle_ids.php',

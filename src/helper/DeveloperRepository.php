@@ -73,19 +73,55 @@ class DeveloperRepository
         return $developer === false ? null : $developer;
     }
 
-    public function linkOAuth(string $developerId, string $provider, string $subjectHash): void
+    public function findOAuthLink(string $provider, string $subjectHash): ?array
     {
+        $stmt = $this->pdo->prepare(
+            'SELECT
+                developer_id,
+                provider,
+                provider_subject_hash,
+                provider_username,
+                linked_at,
+                updated_at
+             FROM oauth_links
+             WHERE provider = :provider
+               AND provider_subject_hash = :subject_hash
+             LIMIT 1'
+        );
+
+        $stmt->execute([
+            ':provider' => $provider,
+            ':subject_hash' => $subjectHash,
+        ]);
+
+        $link = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $link === false ? null : $link;
+    }
+
+    public function linkOAuth(
+        string $developerId,
+        string $provider,
+        string $subjectHash,
+        ?string $providerUsername
+    ): void {
+        $now = date('c');
+
         $stmt = $this->pdo->prepare(
             'INSERT INTO oauth_links (
                 developer_id,
                 provider,
                 provider_subject_hash,
-                linked_at
+                provider_username,
+                linked_at,
+                updated_at
             ) VALUES (
                 :developer_id,
                 :provider,
                 :subject_hash,
-                :linked_at
+                :provider_username,
+                :linked_at,
+                :updated_at
             )'
         );
 
@@ -93,16 +129,43 @@ class DeveloperRepository
             ':developer_id' => $developerId,
             ':provider' => $provider,
             ':subject_hash' => $subjectHash,
-            ':linked_at' => date('c'),
+            ':provider_username' => $providerUsername,
+            ':linked_at' => $now,
+            ':updated_at' => $now,
         ]);
     }
 
-    public function findOrCreateByOAuth(string $provider, string $providerSubject): array
-    {
+    public function updateOAuthUsername(
+        string $provider,
+        string $subjectHash,
+        ?string $providerUsername
+    ): void {
+        $stmt = $this->pdo->prepare(
+            'UPDATE oauth_links
+             SET provider_username = :provider_username,
+                 updated_at = :updated_at
+             WHERE provider = :provider
+               AND provider_subject_hash = :subject_hash'
+        );
+
+        $stmt->execute([
+            ':provider_username' => $providerUsername,
+            ':updated_at' => date('c'),
+            ':provider' => $provider,
+            ':subject_hash' => $subjectHash,
+        ]);
+    }
+
+    public function findOrCreateByOAuth(
+        string $provider,
+        string $providerSubject,
+        ?string $providerUsername = null
+    ): array {
         $subjectHash = $this->hashProviderSubject($providerSubject);
         $developer = $this->findByOAuthSubjectHash($provider, $subjectHash);
 
         if ($developer !== null) {
+            $this->updateOAuthUsername($provider, $subjectHash, $providerUsername);
             return $developer;
         }
 
@@ -110,7 +173,14 @@ class DeveloperRepository
 
         try {
             $developer = $this->create();
-            $this->linkOAuth($developer['developer_id'], $provider, $subjectHash);
+
+            $this->linkOAuth(
+                $developer['developer_id'],
+                $provider,
+                $subjectHash,
+                $providerUsername
+            );
+
             $this->pdo->commit();
         } catch (Throwable $e) {
             if ($this->pdo->inTransaction()) {
@@ -119,6 +189,7 @@ class DeveloperRepository
 
             $existing = $this->findByOAuthSubjectHash($provider, $subjectHash);
             if ($existing !== null) {
+                $this->updateOAuthUsername($provider, $subjectHash, $providerUsername);
                 return $existing;
             }
 

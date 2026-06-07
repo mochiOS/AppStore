@@ -47,7 +47,7 @@ class Provider
         return match ($provider) {
             'github' => isset($raw['id']) ? [
                 'provider' => 'github',
-                'provider_user_id' => (string)$raw['id'],
+                'provider_user_id' => (string) $raw['id'],
                 'username' => $raw['login'] ?? null,
                 'display_name' => $raw['name'] ?? $raw['login'] ?? null,
                 'avatar_url' => $raw['avatar_url'] ?? null,
@@ -55,7 +55,7 @@ class Provider
 
             'gitlab' => isset($raw['id']) ? [
                 'provider' => 'gitlab',
-                'provider_user_id' => (string)$raw['id'],
+                'provider_user_id' => (string) $raw['id'],
                 'username' => $raw['username'] ?? null,
                 'display_name' => $raw['name'] ?? $raw['username'] ?? null,
                 'avatar_url' => $raw['avatar_url'] ?? null,
@@ -63,7 +63,7 @@ class Provider
 
             'google' => isset($raw['sub']) ? [
                 'provider' => 'google',
-                'provider_user_id' => (string)$raw['sub'],
+                'provider_user_id' => (string) $raw['sub'],
                 'username' => null,
                 'display_name' => $raw['name'] ?? null,
                 'avatar_url' => $raw['picture'] ?? null,
@@ -78,6 +78,25 @@ class Provider
         return match ($provider) {
             'github', 'gitlab' => isset($raw['id']) ? (string) $raw['id'] : null,
             'google' => isset($raw['sub']) ? (string) $raw['sub'] : null,
+            default => null,
+        };
+    }
+
+    public static function username(string $provider, array $raw): ?string
+    {
+        return match ($provider) {
+            'github' => isset($raw['login']) && is_string($raw['login'])
+                ? $raw['login']
+                : null,
+
+            'gitlab' => isset($raw['username']) && is_string($raw['username'])
+                ? $raw['username']
+                : null,
+
+            'google' => isset($raw['name']) && is_string($raw['name'])
+                ? $raw['name']
+                : null,
+
             default => null,
         };
     }

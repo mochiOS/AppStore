@@ -22,6 +22,7 @@ require_once ROOT . 'helper/DeveloperCertificateRepository.php';
 require_once ROOT . 'helper/CertificateAuthority.php';
 require_once ROOT . 'helper/PublicKeyRepository.php';
 require_once ROOT . 'helper/BundleIdRepository.php';
+require_once ROOT . 'helper/OAuth/Provider.php';
 
 require_once __DIR__ . '/ApiContext.php';
 require_once __DIR__ . '/guards.php';

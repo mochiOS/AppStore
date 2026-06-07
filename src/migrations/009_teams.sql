@@ -22,3 +22,14 @@ CREATE INDEX IF NOT EXISTS idx_team_members_developer_id
 
 CREATE INDEX IF NOT EXISTS idx_team_members_team_id
     ON team_members(team_id);
+
+CREATE TABLE IF NOT EXISTS app_team_assignments (
+    bundle_id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL,
+    assigned_at TEXT NOT NULL,
+    FOREIGN KEY (bundle_id) REFERENCES developer_apps(bundle_id),
+    FOREIGN KEY (team_id) REFERENCES teams(team_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_team_assignments_team_id
+    ON app_team_assignments(team_id);

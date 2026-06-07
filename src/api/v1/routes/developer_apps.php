@@ -72,6 +72,76 @@ return function (ApiContext $ctx): bool {
         return true;
     }
 
+    if (preg_match('#^/developer/apps/([^/]+)/team$#', $ctx->path, $matches) === 1) {
+        $developerId = requireDeveloperId();
+        $bundleId = urldecode($matches[1]);
+
+        if ($ctx->method !== 'POST') {
+            ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+            return true;
+        }
+
+        $app = $ctx->developerAppRepo->findOwnedByBundleId($bundleId, $developerId);
+
+        if ($app === null) {
+            ApiResponse::error('APP_NOT_FOUND', 'App not found', 404);
+            return true;
+        }
+
+        $payload = readJsonBody();
+
+        $teamIdValue = $payload['team_id'] ?? null;
+        $teamId = null;
+
+        if (is_string($teamIdValue)) {
+            $teamId = trim($teamIdValue);
+
+            if ($teamId === '') {
+                $teamId = null;
+            }
+        }
+
+        if ($teamId !== null) {
+            if (!preg_match('/^team_[0-9a-f]{32}$/', $teamId)) {
+                ApiResponse::error('VALIDATION_ERROR', 'team_id is invalid', 422);
+                return true;
+            }
+
+            $team = $ctx->teamRepo->findByIdForDeveloper($teamId, $developerId);
+
+            if ($team === null) {
+                ApiResponse::error('TEAM_NOT_FOUND', 'Team not found', 404);
+                return true;
+            }
+
+            if (!in_array($team['role'], ['owner', 'admin', 'developer'], true)) {
+                ApiResponse::error(
+                    'FORBIDDEN',
+                    'You do not have permission to assign apps to this team',
+                    403
+                );
+                return true;
+            }
+        }
+
+        $updated = $ctx->developerAppRepo->setTeam(
+            $developerId,
+            $bundleId,
+            $teamId
+        );
+
+        if ($updated === null) {
+            ApiResponse::error('APP_NOT_FOUND', 'App not found', 404);
+            return true;
+        }
+
+        ApiResponse::json([
+            'app' => $updated,
+        ]);
+
+        return true;
+    }
+
     if (preg_match('#^/developer/apps/([^/]+)$#', $ctx->path, $matches) === 1) {
         $developerId = requireDeveloperId();
         $bundleId = urldecode($matches[1]);

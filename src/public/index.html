@@ -33,6 +33,7 @@
         <div class="nav-user" id="navUser" style="display:none">
             <div class="nav-avatar" id="navAvatar"></div>
             <span class="nav-username" id="navUsername"></span>
+            <span class="adminSection" style="display:none">(Admin)</span>
         </div>
         <button class="btn btn-ghost btn-sm" id="logoutBtn" style="display:none" onclick="doLogout()">サインアウト</button>
     </div>
@@ -62,7 +63,7 @@
                 Bundle ID
             </button>
         </div>
-        <div class="sb-section" id="adminSidebarSection" style="display:none">
+        <div class="sb-section adminSection" style="display:none">
             <div class="sb-label">Admin</div>
             <button class="sb-link" data-page="admin" onclick="gotoPage(this, 'admin')">
                 管理者
@@ -905,19 +906,24 @@
     }
 
     async function updateAdminNavigation() {
-        const section = document.getElementById('adminSidebarSection');
+        const sections = document.querySelectorAll('.adminSection');
 
-        if (!section) {
+        if (sections.length === 0) {
             return false;
         }
 
-        section.style.display = 'none';
+        sections.forEach(section => {
+            section.style.display = 'none';
+        });
 
         try {
             const access = await checkAdminAccess();
 
             if (access.is_admin) {
-                section.style.display = '';
+                sections.forEach(section => {
+                    section.style.display = '';
+                });
+
                 return true;
             }
         } catch (error) {

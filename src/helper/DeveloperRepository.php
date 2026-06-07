@@ -61,6 +61,35 @@ class DeveloperRepository
         return $developer === false ? null : $developer;
     }
 
+    public function findByOAuthSubjectHash(string $provider, string $subjectHash): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT
+            d.developer_id,
+            d.created_at,
+            d.status,
+            ol.provider,
+            ol.provider_username,
+            ol.linked_at AS oauth_linked_at,
+            ol.updated_at AS oauth_updated_at
+         FROM oauth_links ol
+         INNER JOIN developers d
+            ON d.developer_id = ol.developer_id
+         WHERE ol.provider = :provider
+           AND ol.provider_subject_hash = :subject_hash
+         LIMIT 1'
+        );
+
+        $stmt->execute([
+            ':provider' => $provider,
+            ':subject_hash' => $subjectHash,
+        ]);
+
+        $developer = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $developer === false ? null : $developer;
+    }
+
     public function findOAuthLink(string $provider, string $subjectHash): ?array
     {
         $stmt = $this->pdo->prepare(

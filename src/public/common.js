@@ -13,6 +13,7 @@ function login(provider = "github") {
 async function apiFetch(path, options = {}) {
     const response = await fetch(`${window.APP_CONFIG.API_URL}${path}`, {
         credentials: "include",
+        cache: "no-store",
         ...options
     });
 
@@ -176,7 +177,11 @@ async function createDeveloperApp(bundleId, displayName, description = "") {
 }
 
 async function listDeveloperReleases(bundleId) {
-    return apiFetch(`/v1/developer/apps/${encodeURIComponent(bundleId)}/releases`);
+    const now = Date.now();
+
+    return apiFetch(
+        `/v1/developer/apps/${encodeURIComponent(bundleId)}/releases?_=${now}`
+    );
 }
 
 async function uploadDeveloperRelease(bundleId, packageFile, changelog = "") {

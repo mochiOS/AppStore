@@ -11,21 +11,29 @@ class DeveloperReleaseRepository
     {
         $stmt = $this->db->prepare(
             'SELECT
-                dr.release_id,
-                dr.bundle_id,
-                dr.version,
-                dr.manifest_hash,
-                dr.package_hash,
-                dr.signature,
-                dr.certificate_id,
-                dr.status,
-                dr.created_at
-             FROM developer_releases dr
-             INNER JOIN bundle_ids bi
-                ON bi.bundle_id = dr.bundle_id
-             WHERE dr.bundle_id = :bundle_id
-               AND bi.developer_id = :developer_id
-             ORDER BY dr.created_at DESC, dr.version DESC'
+            dr.release_id,
+            dr.bundle_id,
+            dr.version,
+            dr.manifest_hash,
+            dr.package_hash,
+            dr.signature,
+            dr.certificate_id,
+            dr.status,
+            dr.created_at,
+            dr.package_path,
+            dr.package_size,
+            dr.changelog,
+            dr.review_message,
+            dr.submitted_at,
+            dr.reviewed_at,
+            dr.reviewed_by,
+            dr.published_at
+         FROM developer_releases dr
+         INNER JOIN bundle_ids bi
+            ON bi.bundle_id = dr.bundle_id
+         WHERE dr.bundle_id = :bundle_id
+           AND bi.developer_id = :developer_id
+         ORDER BY dr.created_at DESC, dr.version DESC'
         );
 
         $stmt->execute([
@@ -40,18 +48,26 @@ class DeveloperReleaseRepository
     {
         $stmt = $this->db->prepare(
             'SELECT
-                release_id,
-                bundle_id,
-                version,
-                manifest_hash,
-                package_hash,
-                signature,
-                certificate_id,
-                status,
-                created_at
-             FROM developer_releases
-             WHERE release_id = :release_id
-             LIMIT 1'
+            release_id,
+            bundle_id,
+            version,
+            manifest_hash,
+            package_hash,
+            signature,
+            certificate_id,
+            status,
+            created_at,
+            package_path,
+            package_size,
+            changelog,
+            review_message,
+            submitted_at,
+            reviewed_at,
+            reviewed_by,
+            published_at
+         FROM developer_releases
+         WHERE release_id = :release_id
+         LIMIT 1'
         );
 
         $stmt->execute([
@@ -98,19 +114,27 @@ class DeveloperReleaseRepository
     {
         $stmt = $this->db->prepare(
             'SELECT
-                release_id,
-                bundle_id,
-                version,
-                manifest_hash,
-                package_hash,
-                signature,
-                certificate_id,
-                status,
-                created_at
-             FROM developer_releases
-             WHERE bundle_id = :bundle_id
-               AND version = :version
-             LIMIT 1'
+            release_id,
+            bundle_id,
+            version,
+            manifest_hash,
+            package_hash,
+            signature,
+            certificate_id,
+            status,
+            created_at,
+            package_path,
+            package_size,
+            changelog,
+            review_message,
+            submitted_at,
+            reviewed_at,
+            reviewed_by,
+            published_at
+         FROM developer_releases
+         WHERE bundle_id = :bundle_id
+           AND version = :version
+         LIMIT 1'
         );
 
         $stmt->execute([
@@ -121,6 +145,141 @@ class DeveloperReleaseRepository
         $release = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return $release === false ? null : $release;
+    }
+
+    public function listByStatus(string $status, int $limit = 50, int $offset = 0): array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT
+            dr.release_id,
+            dr.bundle_id,
+            dr.version,
+            dr.manifest_hash,
+            dr.package_hash,
+            dr.signature,
+            dr.certificate_id,
+            dr.status,
+            dr.created_at,
+            dr.package_path,
+            dr.package_size,
+            dr.changelog,
+            dr.review_message,
+            dr.submitted_at,
+            dr.reviewed_at,
+            dr.reviewed_by,
+            dr.published_at,
+            da.display_name,
+            da.icon_path,
+            da.description
+         FROM developer_releases dr
+         LEFT JOIN developer_apps da
+            ON da.bundle_id = dr.bundle_id
+         WHERE dr.status = :status
+         ORDER BY dr.submitted_at DESC, dr.created_at DESC
+         LIMIT :limit OFFSET :offset'
+        );
+
+        $stmt->bindValue(':status', $status, PDO::PARAM_STR);
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * @throws Throwable
+     */
+    public function approve(string $releaseId, string $adminId): ?array
+    {
+        $release = $this->findById($releaseId);
+
+        if ($release === null) {
+            return null;
+        }
+
+        if ($release['status'] !== 'submitted') {
+            return $release;
+        }
+
+        $now = date('c');
+
+        $this->db->beginTransaction();
+
+        try {
+            $stmt = $this->db->prepare(
+                'UPDATE developer_releases
+             SET status = :status,
+                 review_message = NULL,
+                 reviewed_at = :reviewed_at,
+                 reviewed_by = :reviewed_by,
+                 published_at = :published_at
+             WHERE release_id = :release_id'
+            );
+
+            $stmt->execute([
+                ':status' => 'published',
+                ':reviewed_at' => $now,
+                ':reviewed_by' => $adminId,
+                ':published_at' => $now,
+                ':release_id' => $releaseId,
+            ]);
+
+            $appUpdate = $this->db->prepare(
+                'UPDATE developer_apps
+             SET latest_version = :latest_version,
+                 visibility = :visibility
+             WHERE bundle_id = :bundle_id'
+            );
+
+            $appUpdate->execute([
+                ':latest_version' => $release['version'],
+                ':visibility' => 'public',
+                ':bundle_id' => $release['bundle_id'],
+            ]);
+
+            $this->db->commit();
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+
+            throw $e;
+        }
+
+        return $this->findById($releaseId);
+    }
+
+    public function reject(string $releaseId, string $adminId, string $message): ?array
+    {
+        $release = $this->findById($releaseId);
+
+        if ($release === null) {
+            return null;
+        }
+
+        if ($release['status'] !== 'submitted') {
+            return $release;
+        }
+
+        $stmt = $this->db->prepare(
+            'UPDATE developer_releases
+         SET status = :status,
+             review_message = :review_message,
+             reviewed_at = :reviewed_at,
+             reviewed_by = :reviewed_by
+         WHERE release_id = :release_id'
+        );
+
+        $stmt->execute([
+            ':status' => 'rejected',
+            ':review_message' => $message,
+            ':reviewed_at' => date('c'),
+            ':reviewed_by' => $adminId,
+            ':release_id' => $releaseId,
+        ]);
+
+        return $this->findById($releaseId);
     }
 
     public function versionExists(string $bundleId, string $version): bool

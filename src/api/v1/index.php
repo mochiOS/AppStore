@@ -13,6 +13,7 @@ $routes = [
     require __DIR__ . '/routes/admin_certificates.php',
     require __DIR__ . '/routes/developer_apps.php',
     require __DIR__ . '/routes/developer_releases.php',
+    require __DIR__ . '/routes/admin_releases.php',
 ];
 
 try {

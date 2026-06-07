@@ -633,22 +633,22 @@
             const status = escapeHtml(bundle.status || 'reserved');
 
             return `
-            <div class="list-item">
-                <div class="bicon">
-                    <svg viewBox="0 0 24 24">
-                        <rect x="3" y="3" width="8" height="8" rx="1.5"/>
-                        <rect x="13" y="3" width="8" height="8" rx="1.5"/>
-                        <rect x="3" y="13" width="8" height="8" rx="1.5"/>
-                        <rect x="13" y="13" width="8" height="8" rx="1.5"/>
-                    </svg>
+                <div class="list-item">
+                    <div class="bicon">
+                        <svg viewBox="0 0 24 24">
+                            <rect x="4" y="4" width="16" height="16" rx="3"/>
+                            <path d="M8 9h8M8 13h5"/>
+                        </svg>
+                    </div>
+                    <div class="item-main">
+                        <div class="item-title">${name}</div>
+                        <div class="item-sub">${bundleId}</div>
+                        <div class="item-meta">version: ${version}</div>
+                    </div>
+                    <span class="badge ${visibility === 'public' ? 'badge-green' : 'badge-gray'}">${visibility}</span>
+                    <button class="btn btn-ghost btn-sm" onclick="openReleasesPage('${bundleId}')">リリース</button>
                 </div>
-                <div class="item-main">
-                    <div class="item-title">${appName}</div>
-                    <div class="item-sub">${bundleId}</div>
-                </div>
-                <span class="badge ${status === 'reserved' ? 'badge-green' : 'badge-gray'}">${status}</span>
-            </div>
-        `;
+            `;
         }).join('');
     }
 
@@ -752,6 +752,8 @@
             return;
         }
 
+        list.innerHTML = '<div class="empty"><div class="empty-text">リリース一覧を更新しています...</div></div>';
+
         const result = await listDeveloperReleases(bundleId);
         const releases = result && result.data
             ? (Array.isArray(result.data) ? result.data : result.data.releases || [])
@@ -782,21 +784,19 @@
             const canSubmit = status === 'draft' || status === 'rejected';
 
             return `
-                <div class="list-item">
-                <div class="bicon">
-                <svg viewBox="0 0 24 24">
-                <rect x="4" y="4" width="16" height="16" rx="3"/>
-                <path d="M8 9h8M8 13h5"/>
-                </svg>
-        </div>
-            <div class="item-main">
-                <div class="item-title">${name}</div>
-                <div class="item-sub">${bundleId}</div>
-                <div class="item-meta">version: ${version}</div>
+            <div class="list-item">
+                <div class="item-main">
+                    <div class="item-title">v${version}</div>
+                    <div class="item-sub">${releaseId}</div>
+                    <div class="item-meta">${escapeHtml(createdAt)} / ${escapeHtml(sizeText)}</div>
+                </div>
+                <span class="badge ${status === 'published' ? 'badge-green' : 'badge-gray'}">${status}</span>
+                ${
+                canSubmit
+                    ? `<button class="btn btn-dark btn-sm" onclick="doSubmitRelease('${releaseId}')">提出</button>`
+                    : ''
+            }
             </div>
-            <span class="badge ${visibility === 'public' ? 'badge-green' : 'badge-gray'}">${visibility}</span>
-            <button class="btn btn-ghost btn-sm" onclick="openReleasesPage('${bundleId}')">リリース</button>
-        </div>
         `;
         }).join('');
     }
@@ -846,7 +846,14 @@
 
         if (result && result.ok) {
             toast('リリースを提出しました');
-            await loadReleases();
+
+            const select = document.getElementById('releaseAppSelect');
+            const currentBundleId = select ? select.value : '';
+
+            if (currentBundleId) {
+                await loadReleases();
+            }
+
             return;
         }
 

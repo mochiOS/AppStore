@@ -20,6 +20,7 @@ final readonly class ApiContext
         public CertificateAuthority           $certificateAuthority,
         public PackageStorage                 $storage,
         public AdminRepository                $adminRepo,
+        public PackageSignatureVerifier       $packageSignatureVerifier,
         public array                          $appConfig,
         public int                            $limit,
         public int                            $offset,

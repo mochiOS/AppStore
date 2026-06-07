@@ -11,6 +11,10 @@ async function checkAdminAccess() {
     };
 }
 
+function adminReleaseDownloadUrl(releaseId) {
+    return `${window.APP_CONFIG.API_URL}/v1/admin/releases/${encodeURIComponent(releaseId)}/download`;
+}
+
 async function approveAdminRelease(releaseId) {
     return apiFetch(`/v1/admin/releases/${encodeURIComponent(releaseId)}/approve`, {
         method: "POST"
@@ -69,6 +73,7 @@ async function loadAdminReleases() {
         const releaseStatus = escapeHtml(release.status || 'submitted');
         const changelog = escapeHtml(release.changelog || '');
         const packageSize = Number(release.package_size || 0);
+        const downloadUrl = adminReleaseDownloadUrl(release.release_id || '');
         const sizeText = packageSize > 0
             ? `${Math.ceil(packageSize / 1024)} KiB`
             : 'size unknown';
@@ -88,17 +93,21 @@ async function loadAdminReleases() {
                     <div class="item-meta">${escapeHtml(submittedAt)} / ${escapeHtml(sizeText)}</div>
                     ${changelog ? `<div class="item-meta">changelog: ${changelog}</div>` : ''}
                 </div>
-
+        
                 <span class="badge ${releaseStatus === 'published' ? 'badge-green' : 'badge-gray'}">${releaseStatus}</span>
-
+        
+                <a class="btn btn-ghost btn-sm" href="${downloadUrl}" target="_blank" rel="noopener">
+                    pkg
+                </a>
+        
                 ${
-            canReview
-                ? `
+                    canReview
+                        ? `
                             <button class="btn btn-dark btn-sm" onclick="doApproveRelease('${releaseId}')">承認</button>
                             <button class="btn btn-danger btn-sm" onclick="doRejectRelease('${releaseId}')">却下</button>
                         `
-                : ''
-        }
+                        : ''
+                }
             </div>
         `;
     }).join('');

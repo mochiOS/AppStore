@@ -1,4 +1,109 @@
 <?php
+function packageSignatureStringField(array $signature, array $keys): ?string
+{
+    foreach ($keys as $key) {
+        if (isset($signature[$key]) && is_string($signature[$key])) {
+            $value = trim($signature[$key]);
+
+            if ($value !== '') {
+                return $value;
+            }
+        }
+    }
+
+    return null;
+}
+
+function validateUploadedPackageSignature(
+    ApiContext $ctx,
+    string $developerId,
+    string $packagePath,
+    array $inspection
+): ?array {
+    $signature = $inspection['signature'] ?? null;
+
+    if (!is_array($signature)) {
+        ApiResponse::error(
+            'SIGNATURE_REQUIRED',
+            'Package is not signed',
+            422
+        );
+        return null;
+    }
+
+    $declaredKeyId = packageSignatureStringField($signature, [
+        'key_id',
+        'key-id',
+        'keyId',
+        'key',
+    ]);
+
+    if ($declaredKeyId === null) {
+        ApiResponse::error(
+            'SIGNATURE_KEY_ID_REQUIRED',
+            'Package signature does not contain key_id',
+            422
+        );
+        return null;
+    }
+
+    $signatureValue = packageSignatureStringField($signature, [
+        'signature',
+        'sig',
+    ]);
+
+    if ($signatureValue === null) {
+        ApiResponse::error(
+            'SIGNATURE_VALUE_REQUIRED',
+            'Package signature does not contain signature value',
+            422
+        );
+        return null;
+    }
+
+    try {
+        $verified = $ctx->packageSignatureVerifier->verify($packagePath);
+    } catch (RuntimeException $e) {
+        ApiResponse::error(
+            'SIGNATURE_INVALID',
+            $e->getMessage(),
+            422
+        );
+        return null;
+    }
+
+    $verifiedKeyId = $verified['key_id'];
+
+    if (!hash_equals($declaredKeyId, $verifiedKeyId)) {
+        ApiResponse::error(
+            'SIGNATURE_KEY_ID_MISMATCH',
+            'Package signature key_id does not match msign verify result',
+            422
+        );
+        return null;
+    }
+
+    $publicKey = $ctx->publicKeyRepo->findActiveOwnedByKeyId(
+        $verifiedKeyId,
+        $developerId
+    );
+
+    if ($publicKey === null) {
+        ApiResponse::error(
+            'PUBLIC_KEY_NOT_REGISTERED',
+            'Package is signed, but the public key is not registered by this developer',
+            403
+        );
+        return null;
+    }
+
+    return [
+        'key_id' => $verifiedKeyId,
+        'signature' => $signatureValue,
+        'public_key' => $publicKey,
+        'msign_output' => $verified['output'],
+    ];
+}
 
 return function (ApiContext $ctx): bool {
     if (preg_match('#^/developer/apps/([^/]+)/releases$#', $ctx->path, $matches) === 1) {
@@ -47,6 +152,17 @@ return function (ApiContext $ctx): bool {
             $packageBundleId = (string) $about['bundle_id'];
             $version = (string) $about['version'];
 
+            $signatureCheck = validateUploadedPackageSignature(
+                $ctx,
+                $developerId,
+                $_FILES['package']['tmp_name'],
+                $inspection
+            );
+
+            if ($signatureCheck === null) {
+                return true;
+            }
+
             if ($packageBundleId !== $bundleId) {
                 ApiResponse::error(
                     'BUNDLE_ID_MISMATCH',
@@ -67,18 +183,8 @@ return function (ApiContext $ctx): bool {
                 $version
             );
 
-            $signature = null;
-            $certificateId = null;
-
-            if (isset($inspection['signature']) && is_array($inspection['signature'])) {
-                $signature = isset($inspection['signature']['signature'])
-                    ? (string) $inspection['signature']['signature']
-                    : null;
-
-                $certificateId = isset($inspection['signature']['certificate_id'])
-                    ? (string) $inspection['signature']['certificate_id']
-                    : null;
-            }
+            $signature = $signatureCheck['signature'];
+            $certificateId = $signatureCheck['key_id'];
 
             $release = $ctx->developerReleaseRepo->createDraft(
                 developerId: $developerId,

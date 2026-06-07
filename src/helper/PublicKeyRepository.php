@@ -109,4 +109,25 @@ class PublicKeyRepository
 
         return $key;
     }
+
+    public function findActiveOwnedByKeyId(string $keyId, string $developerId): ?array
+    {
+        $stmt = $this->db->prepare(
+            'SELECT key_id, developer_id, public_key, fingerprint, created_at, revoked_at
+         FROM public_keys
+         WHERE key_id = :key_id
+           AND developer_id = :developer_id
+           AND revoked_at IS NULL
+         LIMIT 1'
+        );
+
+        $stmt->execute([
+            ':key_id' => $keyId,
+            ':developer_id' => $developerId,
+        ]);
+
+        $key = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $key === false ? null : $key;
+    }
 }

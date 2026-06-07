@@ -110,5 +110,45 @@ return function (ApiContext $ctx): bool {
         return true;
     }
 
+    if (preg_match('#^/admin/releases/([^/]+)/download$#', $ctx->path, $matches) === 1) {
+        requireAdminDeveloper($ctx);
+
+        if ($ctx->method !== 'GET') {
+            ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+            return true;
+        }
+
+        $releaseId = urldecode($matches[1]);
+        $release = $ctx->developerReleaseRepo->findById($releaseId);
+
+        if ($release === null) {
+            ApiResponse::error('RELEASE_NOT_FOUND', 'Release not found', 404);
+            return true;
+        }
+
+        $packagePath = (string) ($release['package_path'] ?? '');
+
+        if ($packagePath === '') {
+            ApiResponse::error('PACKAGE_NOT_FOUND', 'Package path is missing', 404);
+            return true;
+        }
+
+        $absolutePath = $ctx->storage->absolutePath($packagePath);
+
+        if (!is_file($absolutePath)) {
+            ApiResponse::error('PACKAGE_FILE_MISSING', 'Package file is missing', 404);
+            return true;
+        }
+
+        $bundleId = (string) ($release['bundle_id'] ?? 'app');
+        $version = (string) ($release['version'] ?? 'unknown');
+
+        ApiResponse::streamFile(
+            $absolutePath,
+            $bundleId . '-' . $version . '.pkg'
+        );
+        return true;
+    }
+
     return false;
 };

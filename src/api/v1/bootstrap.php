@@ -28,6 +28,7 @@ require_once ROOT . 'helper/DeveloperReleaseRepository.php';
 require_once ROOT . 'helper/PackageUploadService.php';
 require_once ROOT . 'helper/PackageInspectService.php';
 require_once ROOT . 'helper/AdminRepository.php';
+require_once ROOT . 'helper/PackageSignatureVerifier.php';
 
 require_once __DIR__ . '/ApiContext.php';
 require_once __DIR__ . '/guards.php';
@@ -73,6 +74,7 @@ return new ApiContext(
     certificateAuthority: CertificateAuthority::fromAppConfig($appConfig),
     storage: new PackageStorage(ROOT),
     adminRepo: new AdminRepository($db),
+    packageSignatureVerifier: new PackageSignatureVerifier(),
     appConfig: $appConfig,
     limit: ApiRequest::queryInt('limit', 50, 0),
     offset: ApiRequest::queryInt('offset', 0, 0),

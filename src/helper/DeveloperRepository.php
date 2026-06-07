@@ -36,36 +36,24 @@ class DeveloperRepository
     public function findById(string $developerId): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT developer_id, created_at, status
-             FROM developers
-             WHERE developer_id = :developer_id
-             LIMIT 1'
+            'SELECT
+            d.developer_id,
+            d.created_at,
+            d.status,
+            ol.provider,
+            ol.provider_username,
+            ol.linked_at AS oauth_linked_at,
+            ol.updated_at AS oauth_updated_at
+         FROM developers d
+         LEFT JOIN oauth_links ol
+            ON ol.developer_id = d.developer_id
+         WHERE d.developer_id = :developer_id
+         ORDER BY ol.updated_at DESC, ol.linked_at DESC
+         LIMIT 1'
         );
 
         $stmt->execute([
             ':developer_id' => $developerId,
-        ]);
-
-        $developer = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        return $developer === false ? null : $developer;
-    }
-
-    public function findByOAuthSubjectHash(string $provider, string $subjectHash): ?array
-    {
-        $stmt = $this->pdo->prepare(
-            'SELECT d.developer_id, d.created_at, d.status
-             FROM oauth_links ol
-             INNER JOIN developers d
-                 ON d.developer_id = ol.developer_id
-             WHERE ol.provider = :provider
-               AND ol.provider_subject_hash = :subject_hash
-             LIMIT 1'
-        );
-
-        $stmt->execute([
-            ':provider' => $provider,
-            ':subject_hash' => $subjectHash,
         ]);
 
         $developer = $stmt->fetch(PDO::FETCH_ASSOC);

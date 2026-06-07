@@ -13,15 +13,15 @@ require_once ROOT . 'helper/Database.php';
 require_once ROOT . 'helper/ApiRequest.php';
 require_once ROOT . 'helper/ApiResponse.php';
 require_once ROOT . 'helper/AppConfig.php';
-
 require_once ROOT . 'helper/AppRepository.php';
 require_once ROOT . 'helper/ReleaseRepository.php';
 require_once ROOT . 'helper/AppCatalog.php';
 require_once ROOT . 'helper/PackageStorage.php';
-
 require_once ROOT . 'helper/DeveloperRepository.php';
 require_once ROOT . 'helper/DeveloperCertificateRepository.php';
 require_once ROOT . 'helper/CertificateAuthority.php';
+require_once ROOT . 'helper/PublicKeyRepository.php';
+require_once ROOT . 'helper/BundleIdRepository.php';
 
 require_once __DIR__ . '/ApiContext.php';
 require_once __DIR__ . '/guards.php';

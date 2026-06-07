@@ -10,6 +10,8 @@ final class ApiContext
         public readonly ReleaseRepository $releaseRepo,
         public readonly AppCatalog $appCatalog,
         public readonly DeveloperRepository $developerRepo,
+        public readonly PublicKeyRepository $publicKeyRepo,
+        public readonly BundleIdRepository $bundleIdRepo,
         public readonly DeveloperCertificateRepository $certificateRepo,
         public readonly CertificateAuthority $certificateAuthority,
         public readonly PackageStorage $storage,

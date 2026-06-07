@@ -5,19 +5,8 @@ return function (ApiContext $ctx): bool {
         $developerId = requireDeveloperId();
 
         if ($ctx->method === 'GET') {
-            $stmt = $ctx->db->prepare(
-                'SELECT key_id, developer_id, public_key, fingerprint, created_at, revoked_at
-                 FROM public_keys
-                 WHERE developer_id = :developer_id
-                 ORDER BY created_at DESC'
-            );
-
-            $stmt->execute([
-                ':developer_id' => $developerId,
-            ]);
-
             ApiResponse::json([
-                'keys' => $stmt->fetchAll(PDO::FETCH_ASSOC),
+                'keys' => $ctx->publicKeyRepo->listByDeveloperId($developerId),
             ]);
             return true;
         }
@@ -35,42 +24,8 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        $key = [
-            'key_id' => 'key_' . bin2hex(random_bytes(16)),
-            'developer_id' => $developerId,
-            'public_key' => $publicKey,
-            'fingerprint' => hash('sha256', $publicKey),
-            'created_at' => date('c'),
-            'revoked_at' => null,
-        ];
-
-        $stmt = $ctx->db->prepare(
-            'INSERT INTO public_keys (
-                key_id,
-                developer_id,
-                public_key,
-                fingerprint,
-                created_at,
-                revoked_at
-            ) VALUES (
-                :key_id,
-                :developer_id,
-                :public_key,
-                :fingerprint,
-                :created_at,
-                :revoked_at
-            )'
-        );
-
         try {
-            $stmt->execute([
-                ':key_id' => $key['key_id'],
-                ':developer_id' => $key['developer_id'],
-                ':public_key' => $key['public_key'],
-                ':fingerprint' => $key['fingerprint'],
-                ':created_at' => $key['created_at'],
-                ':revoked_at' => $key['revoked_at'],
-            ]);
+            $key = $ctx->publicKeyRepo->create($developerId, $publicKey);
         } catch (PDOException $e) {
             if ($e->getCode() === '23000') {
                 ApiResponse::error('KEY_ALREADY_EXISTS', 'Public key already exists', 409);
@@ -93,39 +48,11 @@ return function (ApiContext $ctx): bool {
         }
 
         $developerId = requireDeveloperId();
-        $keyId = $matches[1];
+        $key = $ctx->publicKeyRepo->revokeForDeveloper($matches[1], $developerId);
 
-        $stmt = $ctx->db->prepare(
-            'SELECT key_id, developer_id, public_key, fingerprint, created_at, revoked_at
-             FROM public_keys
-             WHERE key_id = :key_id
-             LIMIT 1'
-        );
-
-        $stmt->execute([
-            ':key_id' => $keyId,
-        ]);
-
-        $key = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if ($key === false || $key['developer_id'] !== $developerId) {
+        if ($key === null) {
             ApiResponse::error('KEY_NOT_FOUND', 'Key not found', 404);
             return true;
-        }
-
-        if ($key['revoked_at'] === null) {
-            $key['revoked_at'] = date('c');
-
-            $update = $ctx->db->prepare(
-                'UPDATE public_keys
-                 SET revoked_at = :revoked_at
-                 WHERE key_id = :key_id'
-            );
-
-            $update->execute([
-                ':revoked_at' => $key['revoked_at'],
-                ':key_id' => $keyId,
-            ]);
         }
 
         ApiResponse::json([

@@ -8,19 +8,8 @@ return function (ApiContext $ctx): bool {
     $developerId = requireDeveloperId();
 
     if ($ctx->method === 'GET') {
-        $stmt = $ctx->db->prepare(
-            'SELECT bundle_id, developer_id, app_name, status, created_at
-             FROM bundle_ids
-             WHERE developer_id = :developer_id
-             ORDER BY created_at DESC'
-        );
-
-        $stmt->execute([
-            ':developer_id' => $developerId,
-        ]);
-
         ApiResponse::json([
-            'bundle_ids' => $stmt->fetchAll(PDO::FETCH_ASSOC),
+            'bundle_ids' => $ctx->bundleIdRepo->listByDeveloperId($developerId),
         ]);
         return true;
     }
@@ -48,38 +37,8 @@ return function (ApiContext $ctx): bool {
         return true;
     }
 
-    $bundle = [
-        'bundle_id' => $bundleId,
-        'developer_id' => $developerId,
-        'app_name' => $appName,
-        'status' => 'reserved',
-        'created_at' => date('c'),
-    ];
-
-    $stmt = $ctx->db->prepare(
-        'INSERT INTO bundle_ids (
-            bundle_id,
-            developer_id,
-            app_name,
-            status,
-            created_at
-        ) VALUES (
-            :bundle_id,
-            :developer_id,
-            :app_name,
-            :status,
-            :created_at
-        )'
-    );
-
     try {
-        $stmt->execute([
-            ':bundle_id' => $bundle['bundle_id'],
-            ':developer_id' => $bundle['developer_id'],
-            ':app_name' => $bundle['app_name'],
-            ':status' => $bundle['status'],
-            ':created_at' => $bundle['created_at'],
-        ]);
+        $bundle = $ctx->bundleIdRepo->create($developerId, $bundleId, $appName);
     } catch (PDOException $e) {
         if ($e->getCode() === '23000') {
             ApiResponse::error('BUNDLE_ID_ALREADY_EXISTS', 'Bundle ID already exists', 409);

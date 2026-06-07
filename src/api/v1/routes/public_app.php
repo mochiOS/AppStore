@@ -2,7 +2,9 @@
 
 return function (ApiContext $ctx): bool {
     if ($ctx->path === '/apps') {
-        ApiResponse::json($ctx->appCatalog->listApps($ctx->limit, $ctx->offset));
+        ApiResponse::json(
+            $ctx->appCatalog->listApps($ctx->limit, $ctx->offset)
+        );
         return true;
     }
 

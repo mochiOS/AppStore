@@ -166,6 +166,28 @@ nav {
     color: var(--g600);
 }
 
+/* TEAM STYLE */
+.inline-select {
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--border-s);
+    border-radius: var(--rs);
+    background: var(--white);
+    color: var(--black);
+    padding: 7px 10px;
+    outline: none;
+}
+
+.inline-select:focus {
+    border-color: var(--black);
+    box-shadow: 0 0 0 3px rgba(0,0,0,0.05);
+}
+
+.app-team-row {
+    margin-top: 8px;
+    justify-content: flex-start;
+}
+
 /* PROFILE GRID */
 .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .info-cell { padding: 14px 16px; background: var(--g100); border-radius: var(--rs); }

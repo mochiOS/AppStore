@@ -7,7 +7,8 @@
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <script src="/common.js"></script>
-    <script src="admin.js"></script>
+    <script src="/admin.js"></script>
+    <script src="/team.js"></script>
 </head>
 <body>
 
@@ -61,6 +62,9 @@
             </button>
             <button class="sb-link" data-page="bundles" onclick="gotoPage(this, 'bundles')">
                 Bundle ID
+            </button>
+            <button class="sb-link" data-page="teams" onclick="gotoPage(this, 'teams')">
+                チーム
             </button>
         </div>
         <div class="sb-section adminSection" style="display:none">
@@ -297,6 +301,86 @@
             </div>
         </div>
 
+        <div class="page" id="page-teams">
+            <div class="page-head">
+                <div class="page-title">チーム</div>
+                <div class="page-sub">チームを作成し、メンバーを管理します。</div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">新しいチームを作成</div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <div class="field-label">チーム名</div>
+                        <label for="teamNameInput"></label><input id="teamNameInput" type="text" placeholder="mochiOS Core">
+                    </div>
+                    <div class="field">
+                        <div class="field-label">Slug</div>
+                        <label for="teamSlugInput"></label><input id="teamSlugInput" type="text" placeholder="mochios-core">
+                    </div>
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn btn-dark" onclick="doCreateTeam()">作成する</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">所属チーム</div>
+                    <button class="btn btn-ghost btn-sm" onclick="loadTeams()">更新</button>
+                </div>
+
+                <div id="teamList">
+                    <div class="empty">
+                        <div class="empty-text">チームがありません</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">メンバー管理</div>
+                </div>
+
+                <div class="field">
+                    <div class="field-label">対象チーム</div>
+                    <label for="teamMemberTeamSelect"></label><select id="teamMemberTeamSelect" onchange="loadTeamMembers()">
+                        <option value="">チームを選択してください</option>
+                    </select>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <div class="field-label">Developer ID</div>
+                        <label for="teamMemberDeveloperIdInput"></label><input id="teamMemberDeveloperIdInput" type="text" placeholder="dev_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                    </div>
+                    <div class="field">
+                        <div class="field-label">Role</div>
+                        <label for="teamMemberRoleInput"></label><select id="teamMemberRoleInput">
+                            <option value="developer">developer</option>
+                            <option value="viewer">viewer</option>
+                            <option value="admin">admin</option>
+                            <option value="owner">owner</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn btn-dark" onclick="doAddTeamMember()">メンバー追加</button>
+                </div>
+
+                <div id="teamMemberList">
+                    <div class="empty">
+                        <div class="empty-text">チームを選択してください</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="page" id="page-bundles">
             <div class="page-head">
                 <div class="page-title">Bundle ID</div>
@@ -423,6 +507,10 @@
         if (page === 'admin') {
             loadAdminPage();
         }
+
+        if (page === 'teams') {
+            loadTeams();
+        }
     }
 
     function toast(message, isError = false) {
@@ -480,8 +568,18 @@
 
     async function loadApps() {
         const result = await listDeveloperApps();
+
+        console.log("developer apps response:", result);
+
         const apps = result && result.data
-            ? (Array.isArray(result.data) ? result.data : result.data.apps || [])
+            ? (
+                Array.isArray(result.data)
+                    ? result.data
+                    : result.data.apps
+                    || result.data.developer_apps
+                    || result.data.items
+                    || []
+            )
             : [];
 
         const el = document.getElementById('appList');
@@ -491,33 +589,78 @@
             return;
         }
 
+        let teams = [];
+
+        try {
+            const teamResult = await listTeams();
+
+            teams = teamResult && teamResult.data
+                ? (
+                    Array.isArray(teamResult.data)
+                        ? teamResult.data
+                        : teamResult.data.teams || []
+                )
+                : [];
+
+            cachedTeams = teams;
+        } catch (error) {
+            console.error(error);
+            teams = [];
+        }
+
         if (!apps.length) {
-            el.innerHTML = '<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/></svg><div class="empty-text">アプリが登録されていません</div></div>';
+            el.innerHTML = '<div class="empty"><div class="empty-text">アプリが登録されていません</div></div>';
             return;
         }
 
-        el.innerHTML = apps.map(app => {
+        el.innerHTML = apps.map((app, index) => {
+            const rawBundleId = app.bundle_id || '';
+            const bundleId = escapeHtml(rawBundleId);
             const name = escapeHtml(app.display_name || app.app_name || '—');
-            const bundleId = escapeHtml(app.bundle_id || '');
             const visibility = escapeHtml(app.visibility || 'private');
             const version = escapeHtml(app.latest_version || '未リリース');
+            const currentTeamId = app.team_id || '';
+            const teamSelectId = `appTeamSelect-${index}`;
+
+            const teamOptions = [
+                '<option value="">個人</option>',
+                ...teams.map(team => {
+                    const teamId = escapeHtml(team.team_id || '');
+                    const teamName = escapeHtml(team.name || team.slug || team.team_id || '');
+                    const selected = currentTeamId === team.team_id ? 'selected' : '';
+
+                    return `<option value="${teamId}" ${selected}>${teamName}</option>`;
+                })
+            ].join('');
 
             return `
-            <div class="list-item">
-                <div class="bicon">
-                    <svg viewBox="0 0 24 24">
-                        <rect x="4" y="4" width="16" height="16" rx="3"/>
-                        <path d="M8 9h8M8 13h5"/>
-                    </svg>
+                <div class="list-item">
+                    <div class="bicon">
+                        <svg viewBox="0 0 24 24">
+                            <rect x="4" y="4" width="16" height="16" rx="3"/>
+                            <path d="M8 9h8M8 13h5"/>
+                        </svg>
+                    </div>
+
+                    <div class="item-main">
+                        <div class="item-title">${name}</div>
+                        <div class="item-sub">${bundleId}</div>
+                        <div class="item-meta">version: ${version}</div>
+
+                        <div class="inline-row app-team-row">
+                            <select id="${teamSelectId}" class="inline-select">
+                                ${teamOptions}
+                            </select>
+                            <button class="btn btn-ghost btn-sm" onclick="doSetAppTeam('${bundleId}', '${teamSelectId}')">
+                                所属を保存
+                            </button>
+                        </div>
+                    </div>
+
+                    <span class="badge ${visibility === 'public' ? 'badge-green' : 'badge-gray'}">${visibility}</span>
+                    <button class="btn btn-ghost btn-sm" onclick="openReleasesPage('${bundleId}')">リリース</button>
                 </div>
-                <div class="item-main">
-                    <div class="item-title">${name}</div>
-                    <div class="item-sub">${bundleId}</div>
-                    <div class="item-meta">version: ${version}</div>
-                </div>
-                <span class="badge ${visibility === 'public' ? 'badge-green' : 'badge-gray'}">${visibility}</span>
-            </div>
-        `;
+            `;
         }).join('');
     }
 
@@ -550,6 +693,27 @@
         }
 
         const message = result?.data?.error?.message || 'アプリ作成に失敗しました';
+        toast(message, true);
+    }
+
+    async function doSetAppTeam(bundleId, selectId) {
+        const select = document.getElementById(selectId);
+
+        if (!select) {
+            return;
+        }
+
+        const teamId = select.value;
+
+        const result = await setDeveloperAppTeam(bundleId, teamId);
+
+        if (result && result.ok) {
+            toast(teamId ? 'アプリをチームに所属させました' : 'アプリを個人所有に戻しました');
+            await loadApps();
+            return;
+        }
+
+        const message = result?.data?.error?.message || '所属チームの更新に失敗しました';
         toast(message, true);
     }
 
@@ -943,7 +1107,19 @@
     }
 
     init();
+
     updateAdminNavigation().catch(error => {
+        console.error(error);
+    });
+    loadTeams()
+        .then(() => loadApps())
+        .catch(error => {
+            console.error(error);
+        });
+    loadAppBundleOptions().catch(error => {
+        console.error(error);
+    });
+    loadReleaseAppOptions().catch(error => {
         console.error(error);
     });
 </script>

@@ -24,6 +24,9 @@ require_once ROOT . 'helper/PublicKeyRepository.php';
 require_once ROOT . 'helper/BundleIdRepository.php';
 require_once ROOT . 'helper/OAuth/Provider.php';
 require_once ROOT . 'helper/DeveloperAppRepository.php';
+require_once ROOT . 'helper/DeveloperReleaseRepository.php';
+require_once ROOT . 'helper/PackageUploadService.php';
+require_once ROOT . 'helper/PackageInspectService.php';
 
 require_once __DIR__ . '/ApiContext.php';
 require_once __DIR__ . '/guards.php';
@@ -61,10 +64,13 @@ return new ApiContext(
     developerRepo: new DeveloperRepository($db),
     publicKeyRepo: new PublicKeyRepository($db),
     bundleIdRepo: new BundleIdRepository($db),
+    developerAppRepo: new DeveloperAppRepository($db),
+    developerReleaseRepo: new DeveloperReleaseRepository($db),
+    packageUploadService: new PackageUploadService(),
+    packageInspectService: new PackageInspectService(),
     certificateRepo: new DeveloperCertificateRepository($db),
     certificateAuthority: CertificateAuthority::fromAppConfig($appConfig),
     storage: new PackageStorage(ROOT),
-    developerAppRepo: new DeveloperAppRepository($db),
     appConfig: $appConfig,
     limit: ApiRequest::queryInt('limit', 50, 0),
     offset: ApiRequest::queryInt('offset', 0, 0),

@@ -1,24 +1,27 @@
 <?php
 
-final class ApiContext
+final readonly class ApiContext
 {
     public function __construct(
-        public readonly string $path,
-        public readonly string $method,
-        public readonly PDO $db,
-        public readonly AppRepository $appRepo,
-        public readonly ReleaseRepository $releaseRepo,
-        public readonly AppCatalog $appCatalog,
-        public readonly DeveloperRepository $developerRepo,
-        public readonly PublicKeyRepository $publicKeyRepo,
-        public readonly BundleIdRepository $bundleIdRepo,
-        public readonly DeveloperCertificateRepository $certificateRepo,
-        public readonly CertificateAuthority $certificateAuthority,
-        public readonly PackageStorage $storage,
-        public readonly DeveloperAppRepository $developerAppRepo,
-        public readonly array $appConfig,
-        public readonly int $limit,
-        public readonly int $offset,
+        public string                         $path,
+        public string                         $method,
+        public PDO                            $db,
+        public AppRepository                  $appRepo,
+        public ReleaseRepository              $releaseRepo,
+        public AppCatalog                     $appCatalog,
+        public DeveloperRepository            $developerRepo,
+        public PublicKeyRepository            $publicKeyRepo,
+        public BundleIdRepository             $bundleIdRepo,
+        public DeveloperAppRepository         $developerAppRepo,
+        public DeveloperReleaseRepository     $developerReleaseRepo,
+        public PackageUploadService           $packageUploadService,
+        public PackageInspectService          $packageInspectService,
+        public DeveloperCertificateRepository $certificateRepo,
+        public CertificateAuthority           $certificateAuthority,
+        public PackageStorage                 $storage,
+        public array                          $appConfig,
+        public int                            $limit,
+        public int                            $offset,
     ) {
     }
 }

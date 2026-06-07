@@ -11,6 +11,7 @@ $routes = [
     require __DIR__ . '/routes/bundle_ids.php',
     require __DIR__ . '/routes/certificates.php',
     require __DIR__ . '/routes/admin_certificates.php',
+    require __DIR__ . '/routes/developer_apps.php',
 ];
 
 try {

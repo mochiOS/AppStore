@@ -8,6 +8,7 @@ final class ApiContext
         public readonly PDO $db,
         public readonly AppRepository $appRepo,
         public readonly ReleaseRepository $releaseRepo,
+        public readonly AppCatalog $appCatalog,
         public readonly DeveloperRepository $developerRepo,
         public readonly DeveloperCertificateRepository $certificateRepo,
         public readonly CertificateAuthority $certificateAuthority,

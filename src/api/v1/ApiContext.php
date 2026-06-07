@@ -21,6 +21,7 @@ final readonly class ApiContext
         public PackageStorage                 $storage,
         public AdminRepository                $adminRepo,
         public PackageSignatureVerifier       $packageSignatureVerifier,
+        public TeamRepository                 $teamRepo,
         public array                          $appConfig,
         public int                            $limit,
         public int                            $offset,

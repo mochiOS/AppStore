@@ -36,7 +36,7 @@ if ($path === '/v1' || $path === '/v1/') {
     return true;
 }
 
-if (preg_match('#^/(?:v1/)?(?:apps|search|auth|oauth|developers|developer|keys|bundle-ids|developer-verifications|certificate-requests|certificates|ca|admin)(?:/|$)#', $path)) {
+if (preg_match('#^/(?:v1/)?(?:apps|teams|search|auth|oauth|developers|developer|keys|bundle-ids|developer-verifications|certificate-requests|certificates|ca|admin)(?:/|$)#', $path)) {
     require __DIR__ . '/v1/index.php';
     return true;
 }

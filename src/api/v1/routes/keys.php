@@ -17,7 +17,19 @@ return function (ApiContext $ctx): bool {
         }
 
         $payload = readJsonBody();
+
+        $keyId = trim((string) ($payload['key_id'] ?? ''));
         $publicKey = trim((string) ($payload['public_key'] ?? ''));
+
+        if ($keyId === '') {
+            ApiResponse::error('VALIDATION_ERROR', 'key_id is required', 422);
+            return true;
+        }
+
+        if (!preg_match('/^[A-Za-z0-9._:-]+$/', $keyId)) {
+            ApiResponse::error('VALIDATION_ERROR', 'key_id is invalid', 422);
+            return true;
+        }
 
         if ($publicKey === '') {
             ApiResponse::error('VALIDATION_ERROR', 'public_key is required', 422);
@@ -25,7 +37,7 @@ return function (ApiContext $ctx): bool {
         }
 
         try {
-            $key = $ctx->publicKeyRepo->create($developerId, $publicKey);
+            $key = $ctx->publicKeyRepo->create($developerId, $keyId, $publicKey);
         } catch (PDOException $e) {
             if ($e->getCode() === '23000') {
                 ApiResponse::error('KEY_ALREADY_EXISTS', 'Public key already exists', 409);

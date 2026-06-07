@@ -254,10 +254,17 @@
                 <div class="card-head">
                     <div class="card-title">新しい公開鍵を登録</div>
                 </div>
+
+                <div class="field">
+                    <div class="field-label">Key ID</div>
+                    <label for="keyIdInput"></label><input id="keyIdInput" type="text" placeholder="exampleSignature">
+                </div>
+
                 <div class="field">
                     <div class="field-label">公開鍵</div>
-                    <label for="publicKeyInput"></label><textarea id="publicKeyInput" rows="3" placeholder="ssh-ed25519 AAAA..."></textarea>
+                    <label for="publicKeyInput"></label><textarea id="publicKeyInput" rows="3" placeholder="PublicKey..."></textarea>
                 </div>
+
                 <div class="btn-row">
                     <button class="btn btn-dark" onclick="doCreateKey()">登録する</button>
                 </div>
@@ -591,17 +598,19 @@
     }
 
     async function doCreateKey() {
+        const keyId = document.getElementById('keyIdInput').value.trim();
         const publicKey = document.getElementById('publicKeyInput').value.trim();
 
-        if (!publicKey) {
-            toast('公開鍵を入力してください', true);
+        if (!keyId || !publicKey) {
+            toast('Key IDと公開鍵を入力してください', true);
             return;
         }
 
-        const result = await createKey(publicKey);
+        const result = await createKey(keyId, publicKey);
 
         if (result && result.ok) {
             toast('公開鍵を登録しました');
+            document.getElementById('keyIdInput').value = '';
             document.getElementById('publicKeyInput').value = '';
             await loadKeys();
             return;

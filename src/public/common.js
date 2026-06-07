@@ -119,13 +119,14 @@ async function listKeys() {
     return apiFetch("/v1/keys");
 }
 
-async function createKey(publicKey) {
+async function createKey(keyId, publicKey) {
     return apiFetch("/v1/keys", {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
+            key_id: keyId,
             public_key: publicKey
         })
     });

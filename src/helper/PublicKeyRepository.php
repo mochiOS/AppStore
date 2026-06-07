@@ -41,10 +41,10 @@ class PublicKeyRepository
         return $key === false ? null : $key;
     }
 
-    public function create(string $developerId, string $publicKey): array
+    public function create(string $developerId, string $keyId, string $publicKey): array
     {
         $key = [
-            'key_id' => 'key_' . bin2hex(random_bytes(16)),
+            'key_id' => $keyId,
             'developer_id' => $developerId,
             'public_key' => $publicKey,
             'fingerprint' => hash('sha256', $publicKey),
@@ -54,20 +54,20 @@ class PublicKeyRepository
 
         $stmt = $this->db->prepare(
             'INSERT INTO public_keys (
-                key_id,
-                developer_id,
-                public_key,
-                fingerprint,
-                created_at,
-                revoked_at
-            ) VALUES (
-                :key_id,
-                :developer_id,
-                :public_key,
-                :fingerprint,
-                :created_at,
-                :revoked_at
-            )'
+            key_id,
+            developer_id,
+            public_key,
+            fingerprint,
+            created_at,
+            revoked_at
+        ) VALUES (
+            :key_id,
+            :developer_id,
+            :public_key,
+            :fingerprint,
+            :created_at,
+            :revoked_at
+        )'
         );
 
         $stmt->execute([
@@ -120,6 +120,7 @@ class PublicKeyRepository
            AND revoked_at IS NULL
          LIMIT 1'
         );
+
 
         $stmt->execute([
             ':key_id' => $keyId,

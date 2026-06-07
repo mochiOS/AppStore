@@ -106,13 +106,17 @@
                 <div class="field-row">
                     <div class="field">
                         <div class="field-label">Bundle ID</div>
-                        <label for="appBundleIdInput"></label><input id="appBundleIdInput" type="text" placeholder="com.example.myapp">
+                        <label for="appBundleIdSelect"></label><select id="appBundleIdSelect">
+                            <option value="">Bundle IDを選択してください</option>
+                        </select>
                     </div>
                     <div class="field">
                         <div class="field-label">表示名</div>
                         <label for="appDisplayNameInput"></label><input id="appDisplayNameInput" type="text" placeholder="My App">
                     </div>
                 </div>
+
+                <button class="btn btn-ghost btn-sm hint-row" onclick="openBundlePage()">Bundle IDを登録</button>
 
                 <div class="field">
                     <div class="field-label">説明</div>
@@ -247,6 +251,47 @@
             .replaceAll("'", '&#039;');
     }
 
+    function openBundlePage() {
+        const button = document.querySelector('.sb-link[data-page="bundles"]');
+
+        if (button) {
+            gotoPage(button, 'bundles');
+        }
+    }
+
+    async function loadAppBundleOptions() {
+        const select = document.getElementById('appBundleIdSelect');
+
+        if (!select) {
+            return;
+        }
+
+        const result = await listBundleIds();
+        const bundles = result && result.data
+            ? (Array.isArray(result.data) ? result.data : result.data.bundle_ids || [])
+            : [];
+
+        if (!result || !result.ok) {
+            select.innerHTML = '<option value="">Bundle IDを取得できませんでした</option>';
+            return;
+        }
+
+        if (!bundles.length) {
+            select.innerHTML = '<option value="">登録済みBundle IDがありません</option>';
+            return;
+        }
+
+        select.innerHTML = [
+            '<option value="">Bundle IDを選択してください</option>',
+            ...bundles.map(bundle => {
+                const bundleId = escapeHtml(bundle.bundle_id || '');
+                const appName = escapeHtml(bundle.app_name || bundle.bundle_id || '');
+
+                return `<option value="${bundleId}">${appName} — ${bundleId}</option>`;
+            })
+        ].join('');
+    }
+
     function gotoPage(el, page) {
         document.querySelectorAll('.sb-link').forEach(link => link.classList.remove('active'));
         el.classList.add('active');
@@ -256,6 +301,7 @@
 
         if (page === 'apps') {
             loadApps();
+            loadAppBundleOptions();
         }
 
         if (page === 'keys') {
@@ -364,7 +410,7 @@
     }
 
     async function doCreateApp() {
-        const bundleId = document.getElementById('appBundleIdInput').value.trim();
+        const bundleId = document.getElementById('appBundleIdSelect').value.trim();
         const displayName = document.getElementById('appDisplayNameInput').value.trim();
         const description = document.getElementById('appDescriptionInput').value.trim();
 
@@ -382,11 +428,12 @@
         if (result && result.ok) {
             toast('アプリを作成しました');
 
-            document.getElementById('appBundleIdInput').value = '';
+            document.getElementById('appBundleIdSelect').value = '';
             document.getElementById('appDisplayNameInput').value = '';
             document.getElementById('appDescriptionInput').value = '';
 
             await loadApps();
+            await loadAppBundleOptions();
             return;
         }
 
@@ -556,6 +603,7 @@
             document.getElementById('bundleIdInput').value = '';
             document.getElementById('appNameInput').value = '';
             await loadBundles();
+            await loadAppBundleOptions();
             return;
         }
 

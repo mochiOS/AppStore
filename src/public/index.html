@@ -62,10 +62,10 @@
                 Bundle ID
             </button>
         </div>
-        <div class="sb-section">
+        <div class="sb-section" id="adminSidebarSection" style="display:none">
             <div class="sb-label">Admin</div>
             <button class="sb-link" data-page="admin" onclick="gotoPage(this, 'admin')">
-                審査
+                管理者
             </button>
         </div>
     </aside>
@@ -675,17 +675,17 @@
                 <div class="list-item">
                     <div class="bicon">
                         <svg viewBox="0 0 24 24">
-                            <rect x="4" y="4" width="16" height="16" rx="3"/>
-                            <path d="M8 9h8M8 13h5"/>
+                            <rect x="3" y="3" width="8" height="8" rx="1.5"/>
+                            <rect x="13" y="3" width="8" height="8" rx="1.5"/>
+                            <rect x="3" y="13" width="8" height="8" rx="1.5"/>
+                            <rect x="13" y="13" width="8" height="8" rx="1.5"/>
                         </svg>
                     </div>
                     <div class="item-main">
-                        <div class="item-title">${name}</div>
+                        <div class="item-title">${appName}</div>
                         <div class="item-sub">${bundleId}</div>
-                        <div class="item-meta">version: ${version}</div>
                     </div>
-                    <span class="badge ${visibility === 'public' ? 'badge-green' : 'badge-gray'}">${visibility}</span>
-                    <button class="btn btn-ghost btn-sm" onclick="openReleasesPage('${bundleId}')">リリース</button>
+                    <span class="badge ${status === 'reserved' ? 'badge-green' : 'badge-gray'}">${status}</span>
                 </div>
             `;
         }).join('');
@@ -904,7 +904,33 @@
         await logout();
     }
 
+    async function updateAdminNavigation() {
+        const section = document.getElementById('adminSidebarSection');
+
+        if (!section) {
+            return false;
+        }
+
+        section.style.display = 'none';
+
+        try {
+            const access = await checkAdminAccess();
+
+            if (access.is_admin) {
+                section.style.display = '';
+                return true;
+            }
+        } catch (error) {
+            console.error(error);
+        }
+
+        return false;
+    }
+
     init();
+    updateAdminNavigation().catch(error => {
+        console.error(error);
+    });
 </script>
 </body>
 </html>

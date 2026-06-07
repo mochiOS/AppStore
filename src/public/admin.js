@@ -2,6 +2,15 @@ async function listAdminReleases(status = "submitted") {
     return apiFetch(`/v1/admin/releases?status=${encodeURIComponent(status)}`);
 }
 
+async function checkAdminAccess() {
+    const result = await listAdminReleases("submitted");
+
+    return {
+        is_admin: Boolean(result && result.ok),
+        result
+    };
+}
+
 async function approveAdminRelease(releaseId) {
     return apiFetch(`/v1/admin/releases/${encodeURIComponent(releaseId)}/approve`, {
         method: "POST"

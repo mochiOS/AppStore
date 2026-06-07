@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <script src="/common.js"></script>
+    <script src="admin.js"></script>
 </head>
 <body>
 
@@ -60,7 +61,12 @@
             <button class="sb-link" data-page="bundles" onclick="gotoPage(this, 'bundles')">
                 Bundle ID
             </button>
-
+        </div>
+        <div class="sb-section">
+            <div class="sb-label">Admin</div>
+            <button class="sb-link" data-page="admin" onclick="gotoPage(this, 'admin')">
+                審査
+            </button>
         </div>
     </aside>
 
@@ -202,6 +208,52 @@
                             <path d="M8 11l4 4 4-4"/>
                             <path d="M4 19h16"/>
                         </svg>
+                        <div class="empty-text">リリースがありません</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page" id="page-admin">
+            <div class="page-head">
+                <div class="page-title">管理者</div>
+                <div class="page-sub">提出されたリリースを審査します。</div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">Admin Token</div>
+                </div>
+
+                <div class="field">
+                    <div class="field-label">X-Admin-Token</div>
+                    <label for="adminTokenInput"></label><input id="adminTokenInput" type="password" placeholder="管理者トークン">
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn btn-dark" onclick="saveAdminToken()">保存</button>
+                    <button class="btn btn-ghost" onclick="removeAdminToken()">削除</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-head">
+                    <div class="card-title">審査対象</div>
+                    <button class="btn btn-ghost btn-sm" onclick="loadAdminReleases()">更新</button>
+                </div>
+
+                <div class="field">
+                    <div class="field-label">Status</div>
+                    <label for="adminReleaseStatusSelect"></label><select id="adminReleaseStatusSelect" onchange="loadAdminReleases()">
+                        <option value="submitted">submitted</option>
+                        <option value="published">published</option>
+                        <option value="rejected">rejected</option>
+                        <option value="draft">draft</option>
+                    </select>
+                </div>
+
+                <div id="adminReleaseList">
+                    <div class="empty">
                         <div class="empty-text">リリースがありません</div>
                     </div>
                 </div>
@@ -375,6 +427,10 @@
 
         if (page === 'releases') {
             loadReleaseAppOptions();
+        }
+
+        if (page === 'admin') {
+            loadAdminPage();
         }
     }
 

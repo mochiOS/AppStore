@@ -1,13 +1,13 @@
 window.APP_CONFIG = {
     API_URL:
-        location.hostname === "localhost"
+        location.hostname === "localhost" || location.hostname === "127.0.0.1"
             ? "http://localhost:3001"
             : "https://api.mochios.org"
 };
 
-function login(provider) {
+function login(provider = "github") {
     location.href =
-        `${window.APP_CONFIG.API_URL}/v1/oauth/index.php?provider=${encodeURIComponent(provider)}`;
+        `${window.APP_CONFIG.API_URL}/v1/oauth?provider=${encodeURIComponent(provider)}`;
 }
 
 async function apiFetch(path, options = {}) {
@@ -38,6 +38,7 @@ async function apiFetch(path, options = {}) {
 
 async function showMe() {
     const result = await apiFetch("/v1/auth/me");
+
     if (!result.ok) {
         return null;
     }
@@ -47,11 +48,70 @@ async function showMe() {
 
 async function showDeveloper() {
     const result = await apiFetch("/v1/developers/me");
+
     if (!result.ok) {
         return null;
     }
 
     return result.data;
+}
+
+function getDeveloperRecord(developerResponse) {
+    if (!developerResponse) {
+        return null;
+    }
+
+    if (developerResponse.developer) {
+        return developerResponse.developer;
+    }
+
+    return developerResponse;
+}
+
+function getDeveloperUsername(auth, developerResponse) {
+    const developer = getDeveloperRecord(developerResponse);
+
+    return (
+        developer?.github_login ||
+        developer?.github_username ||
+        developer?.provider_username ||
+        developer?.username ||
+        developer?.oauth?.provider_username ||
+        developer?.oauth?.github_username ||
+        auth?.user?.username ||
+        null
+    );
+}
+
+function githubAvatarUrl(username, size = 56) {
+    if (!username) {
+        return null;
+    }
+
+    return `https://github.com/${encodeURIComponent(username)}.png?size=${encodeURIComponent(size)}`;
+}
+
+function renderGitHubAvatar(element, username, size = 56) {
+    if (!element || !username) {
+        return;
+    }
+
+    const avatarUrl = githubAvatarUrl(username, size);
+
+    if (!avatarUrl) {
+        return;
+    }
+
+    const img = document.createElement("img");
+    img.src = avatarUrl;
+    img.alt = username;
+    img.width = size;
+    img.height = size;
+    img.loading = "lazy";
+    img.referrerPolicy = "no-referrer";
+
+    element.innerHTML = "";
+    element.appendChild(img);
 }
 
 async function listKeys() {
@@ -93,6 +153,29 @@ async function createBundleId(bundleId, appName) {
     });
 }
 
+async function listDeveloperApps() {
+    return apiFetch("/v1/developer/apps");
+}
+
+async function getDeveloperApp(bundleId) {
+    return apiFetch(`/v1/developer/apps/${encodeURIComponent(bundleId)}`);
+}
+
+async function createDeveloperApp(bundleId, displayName, description = "", iconPath = "") {
+    return apiFetch("/v1/developer/apps", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            bundle_id: bundleId,
+            display_name: displayName,
+            description,
+            icon_path: iconPath
+        })
+    });
+}
+
 async function logout() {
     try {
         const response = await apiFetch("/v1/auth/logout", {
@@ -121,6 +204,11 @@ async function updateLoginState() {
     document.querySelectorAll(".isNotLogin").forEach(element => {
         element.style.display = isLoggedIn ? "none" : "";
     });
+
+    return {
+        auth,
+        isLoggedIn
+    };
 }
 
 updateLoginState().then(() => {});

@@ -25,4 +25,10 @@ data: migrate
 test:
 	@$(PHP) src/tests/run.php
 
-.PHONY: run api public clean data migrate test
+admin:
+	php src/cli/admin.php $(filter-out $@,$(MAKECMDGOALS))
+
+%:
+	@:
+
+.PHONY: run api public clean data migrate test admin

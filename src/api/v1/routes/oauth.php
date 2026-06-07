@@ -106,7 +106,7 @@ return function (ApiContext $ctx): bool {
         $_SESSION['oauth_state'] = $state;
         $_SESSION['oauth_provider'] = $provider;
 
-        $redirectUri = rtrim($ctx->appConfig['api_url'], '/') . '/v1/oauth/callback.php';
+        $redirectUri = rtrim($ctx->appConfig['api_url'], '/') . '/v1/oauth/callback';
 
         $params = [
             'client_id' => $config['client_id'],
@@ -120,7 +120,7 @@ return function (ApiContext $ctx): bool {
         return true;
     }
 
-    if ($ctx->path === '/oauth/callback' || $ctx->path === '/oauth/callback.php') {
+    if ($ctx->path === '/oauth/callback') {
         if ($ctx->method !== 'GET') {
             ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
             return true;
@@ -153,7 +153,7 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        $redirectUri = rtrim($ctx->appConfig['api_url'], '/') . '/v1/oauth/callback.php';
+        $redirectUri = rtrim($ctx->appConfig['api_url'], '/') . '/v1/oauth/callback';
 
         try {
             $token = oauthPost($config['token_url'], [

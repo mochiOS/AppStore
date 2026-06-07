@@ -38,15 +38,16 @@ function readJsonBody(): array
     return $payload;
 }
 
-function requireAdminToken(array $appConfig): string
+function requireAdminDeveloper(ApiContext $ctx): array
 {
-    $configuredToken = (string) (getenv('APPSTORE_ADMIN_API_TOKEN') ?: ($appConfig['admin_api_token'] ?? ''));
-    $providedToken = (string) ($_SERVER['HTTP_X_ADMIN_TOKEN'] ?? '');
+    $developerId = requireDeveloperId();
 
-    if ($configuredToken === '' || !hash_equals($configuredToken, $providedToken)) {
-        ApiResponse::error('FORBIDDEN', 'Admin token is required', 403);
+    $admin = $ctx->adminRepo->findByDeveloperId($developerId);
+
+    if ($admin === null) {
+        ApiResponse::error('FORBIDDEN', 'Admin permission is required', 403);
         throw new ApiAbortException('Forbidden');
     }
 
-    return 'admin';
+    return $admin;
 }

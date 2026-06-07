@@ -1,39 +1,15 @@
-function getAdminToken() {
-    return localStorage.getItem("admin_token") || "";
-}
-
-function setAdminToken(token) {
-    localStorage.setItem("admin_token", token);
-}
-
-function clearAdminToken() {
-    localStorage.removeItem("admin_token");
-}
-
-async function adminFetch(path, options = {}) {
-    const token = getAdminToken();
-
-    return apiFetch(path, {
-        ...options,
-        headers: {
-            ...(options.headers || {}),
-            "X-Admin-Token": token
-        }
-    });
-}
-
 async function listAdminReleases(status = "submitted") {
-    return adminFetch(`/v1/admin/releases?status=${encodeURIComponent(status)}`);
+    return apiFetch(`/v1/admin/releases?status=${encodeURIComponent(status)}`);
 }
 
 async function approveAdminRelease(releaseId) {
-    return adminFetch(`/v1/admin/releases/${encodeURIComponent(releaseId)}/approve`, {
+    return apiFetch(`/v1/admin/releases/${encodeURIComponent(releaseId)}/approve`, {
         method: "POST"
     });
 }
 
 async function rejectAdminRelease(releaseId, message) {
-    return adminFetch(`/v1/admin/releases/${encodeURIComponent(releaseId)}/reject`, {
+    return apiFetch(`/v1/admin/releases/${encodeURIComponent(releaseId)}/reject`, {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -45,37 +21,7 @@ async function rejectAdminRelease(releaseId, message) {
 }
 
 function loadAdminPage() {
-    const tokenInput = document.getElementById('adminTokenInput');
-
-    if (tokenInput) {
-        tokenInput.value = getAdminToken();
-    }
-
-    loadAdminReleases().then(() => {})
-}
-
-function saveAdminToken() {
-    const token = document.getElementById('adminTokenInput').value.trim();
-
-    if (!token) {
-        toast('Admin Tokenを入力してください', true);
-        return;
-    }
-
-    setAdminToken(token);
-    toast('Admin Tokenを保存しました');
     loadAdminReleases().then(() => {});
-}
-
-function removeAdminToken() {
-    clearAdminToken();
-
-    const tokenInput = document.getElementById('adminTokenInput');
-    if (tokenInput) {
-        tokenInput.value = '';
-    }
-
-    toast('Admin Tokenを削除しました');
 }
 
 async function loadAdminReleases() {
@@ -87,11 +33,6 @@ async function loadAdminReleases() {
     }
 
     const status = statusSelect.value || 'submitted';
-
-    if (!getAdminToken()) {
-        list.innerHTML = '<div class="empty"><div class="empty-text">Admin Tokenを入力してください</div></div>';
-        return;
-    }
 
     list.innerHTML = '<div class="empty"><div class="empty-text">審査対象を取得しています...</div></div>';
 

@@ -3,7 +3,8 @@
 
 return function (ApiContext $ctx): bool {
     if ($ctx->path === '/admin/releases') {
-        $adminId = requireAdminToken($ctx->appConfig);
+        $admin = requireAdminDeveloper($ctx);
+        $adminId = $admin['developer_id'];
 
         if ($ctx->method !== 'GET') {
             ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
@@ -30,7 +31,8 @@ return function (ApiContext $ctx): bool {
     }
 
     if (preg_match('#^/admin/releases/([^/]+)/approve$#', $ctx->path, $matches) === 1) {
-        $adminId = requireAdminToken($ctx->appConfig);
+        $admin = requireAdminDeveloper($ctx);
+        $adminId = $admin['developer_id'];
 
         if ($ctx->method !== 'POST') {
             ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
@@ -63,7 +65,8 @@ return function (ApiContext $ctx): bool {
     }
 
     if (preg_match('#^/admin/releases/([^/]+)/reject$#', $ctx->path, $matches) === 1) {
-        $adminId = requireAdminToken($ctx->appConfig);
+        $admin = requireAdminDeveloper($ctx);
+        $adminId = $admin['developer_id'];
 
         if ($ctx->method !== 'POST') {
             ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);

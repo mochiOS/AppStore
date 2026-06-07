@@ -7,7 +7,8 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        $adminId = requireAdminToken($ctx->appConfig);
+        $admin = requireAdminDeveloper($ctx);
+        $adminId = $admin['developer_id'];
         $developerId = $matches[1];
 
         $developer = $ctx->developerRepo->findById($developerId);
@@ -46,7 +47,8 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        $adminId = requireAdminToken($ctx->appConfig);
+        $admin = requireAdminDeveloper($ctx);
+        $adminId = $admin['developer_id'];
 
         if (!$ctx->certificateAuthority->isConfigured()) {
             ApiResponse::error('CA_NOT_CONFIGURED', 'Certificate authority is not configured', 503);
@@ -84,7 +86,8 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        $adminId = requireAdminToken($ctx->appConfig);
+        $admin = requireAdminDeveloper($ctx);
+        $adminId = $admin['developer_id'];
         $payload = readJsonBody();
         $reason = isset($payload['reason']) ? trim((string) $payload['reason']) : null;
 
@@ -111,7 +114,7 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        requireAdminToken($ctx->appConfig);
+        requireAdminDeveloper($ctx);
 
         $payload = readJsonBody();
         $reason = trim((string) ($payload['reason'] ?? ''));

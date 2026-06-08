@@ -12,7 +12,7 @@ api:
 	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php
 
 public:
-	@cd src/public && $(PHP) -S localhost:$(PUBLIC_PORT)
+	@cd src/public/console && $(PHP) -S localhost:$(PUBLIC_PORT)
 
 clean:
 	rm -rf $(DATA_DIR)/

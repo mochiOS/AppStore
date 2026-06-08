@@ -1,10 +1,600 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>mochiOS AppStore</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mochiOS App Store</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+<nav>
+    <a class="nav-brand" href="#">
+        <img src="resources/mochimochi-kun.svg" width="30" height="30">
+        mochiOS App Store
+    </a>
+    <div class="nav-tabs">
+        <button class="nav-tab active" onclick="showPage('today', this)">Today</button>
+        <button class="nav-tab" onclick="showPage('games', this)">ゲーム</button>
+        <button class="nav-tab" onclick="showPage('apps', this)">App</button>
+        <button class="nav-tab" onclick="showPage('search', this)">検索</button>
+        <button class="nav-tab" onclick="showPage('updates', this)">アップデート</button>
+    </div>
+    <div class="nav-right">
+        <div class="nav-search">
+            <span class="material-symbols-outlined">search</span>
+            アプリを検索…
+        </div>
+        <div class="nav-avatar">
+            <svg viewBox="0 0 16 16"><circle cx="8" cy="6" r="3"/><path d="M2 14c0-4 12-4 12 0"/></svg>
+        </div>
+    </div>
+</nav>
+
+<div class="layout">
+    <div class="sidebar">
+        <div class="sb-section">
+            <div class="sb-label">ストア</div>
+            <button class="sb-link active" onclick="showPage('today', this)">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        today
+                    </span>
+                </div>
+                Today
+            </button>
+            <button class="sb-link" onclick="showPage('games', this)">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        chess_knight
+                    </span>
+                </div>
+                ゲーム
+            </button>
+            <button class="sb-link" onclick="showPage('apps', this)">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        apps
+                    </span>
+                </div>
+                App
+            </button>
+        </div>
+        <div class="sb-section">
+            <div class="sb-label">カテゴリ</div>
+            <button class="sb-link" onclick="toastMsg('カテゴリ: 仕事効率化')">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        work
+                    </span>
+                </div>
+                仕事効率化
+                <span class="sb-cat-badge"><!-- TODO: 必要なデータ --></span>
+            </button>
+            <button class="sb-link" onclick="toastMsg('カテゴリ: ライフスタイル')">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        favorite
+                    </span>
+                </div>
+                ライフスタイル
+                <span class="sb-cat-badge"><!-- TODO: 必要なデータ --></span>
+            </button>
+            <button class="sb-link" onclick="toastMsg('カテゴリ: ソーシャル')">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        people
+                    </span>
+                </div>
+                ソーシャル
+                <span class="sb-cat-badge"><!-- TODO: 必要なデータ --></span>
+            </button>
+            <button class="sb-link" onclick="toastMsg('カテゴリ: 教育')">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        school
+                    </span>
+                </div>
+                教育
+                <span class="sb-cat-badge"><!-- TODO: 必要なデータ --></span>
+            </button>
+            <button class="sb-link" onclick="toastMsg('カテゴリ: ヘルスケア')">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        local_hospital
+                    </span>
+                </div>
+                ヘルスケア
+                <span class="sb-cat-badge"><!-- TODO: 必要なデータ --></span>
+            </button>
+            <button class="sb-link" onclick="toastMsg('カテゴリ: ファイナンス')">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        account_balance
+                    </span>
+                </div>
+                ファイナンス
+                <span class="sb-cat-badge"><!-- TODO: 必要なデータ --></span>
+            </button>
+        </div>
+        <div class="sb-section">
+            <div class="sb-label">My Apps</div>
+            <button class="sb-link" onclick="showPage('updates', this)">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        update
+                    </span>
+                </div>
+                アップデート
+            </button>
+            <button class="sb-link">
+                <div class="sb-icon">
+                    <span class="material-symbols-outlined">
+                        account_circle
+                    </span>
+                </div>
+                アカウント
+            </button>
+        </div>
+    </div>
+
+    <div class="main">
+
+        <div class="page active" id="page-today">
+            <div class="section-header" style="margin-top:0">
+                <div>
+                    <div style="font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--g400);margin-bottom:4px;">
+                        <!-- TODO: 必要なデータ - 今日の日付 (例: 2025年6月8日 日曜日) -->
+                        <!-- TODO: 必要なデータ -->
+                    </div>
+                    <div class="section-title" style="font-size:28px;">Today</div>
+                </div>
+            </div>
+
+            <div class="today-card">
+                <div class="today-card-header">
+                    <div class="today-card-header-overlay"></div>
+                    <!-- TODO: 必要なデータ - Todayピックアップのビジュアル/スクリーンショット -->
+                </div>
+                <div class="today-card-body">
+                    <div class="today-eyebrow">App of the Day</div>
+                    <div class="today-card-title"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                    <div class="today-card-sub"><!-- TODO: 必要なデータ - アプリの紹介文・キャッチコピー --></div>
+                    <div class="today-card-footer">
+                        <div class="today-app-icon"><!-- TODO: 必要なデータ --></div>
+                        <div>
+                            <div class="today-app-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                            <div style="font-size:12px;color:var(--g400);"><!-- TODO: 必要なデータ - カテゴリ --></div>
+                        </div>
+                        <button class="today-get-btn" onclick="toastMsg('ダウンロード開始')">入手</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="today-card">
+                <div class="today-card-header" style="background:#f0f4ff; font-size:64px;">
+                    <!-- TODO: 必要なデータ - ゲームストーリービジュアル -->
+                </div>
+                <div class="today-card-body">
+                    <div class="today-eyebrow">Game of the Day</div>
+                    <div class="today-card-title"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                    <div class="today-card-sub"><!-- TODO: 必要なデータ - ゲームの紹介文 --></div>
+                    <div class="today-card-footer">
+                        <div class="today-app-icon"><!-- TODO: 必要なデータ --></div>
+                        <div>
+                            <div class="today-app-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                            <div style="font-size:12px;color:var(--g400);">アクション</div>
+                        </div>
+                        <button class="today-get-btn" onclick="toastMsg('ダウンロード開始')">入手</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-header">
+                <span class="section-title">注目のコレクション</span>
+                <a class="section-more" href="#">すべて表示</a>
+            </div>
+            <div class="featured-strip">
+                <div class="feat-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="feat-card-img"><!-- TODO: 必要なデータ --></div>
+                    <div class="feat-card-body">
+                        <div class="feat-card-category">デベロッパーツール</div>
+                        <div class="feat-card-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="feat-card-sub"><!-- TODO: 必要なデータ - キャッチコピー --></div>
+                    </div>
+                </div>
+                <div class="feat-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="feat-card-img" style="background:#fff5f5;"><!-- TODO: 必要なデータ --></div>
+                    <div class="feat-card-body">
+                        <div class="feat-card-category">写真・ビデオ</div>
+                        <div class="feat-card-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="feat-card-sub"><!-- TODO: 必要なデータ - キャッチコピー --></div>
+                    </div>
+                </div>
+                <div class="feat-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="feat-card-img" style="background:#f0fff4;"><!-- TODO: 必要なデータ --></div>
+                    <div class="feat-card-body">
+                        <div class="feat-card-category">ミュージック</div>
+                        <div class="feat-card-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="feat-card-sub"><!-- TODO: 必要なデータ - キャッチコピー --></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page" id="page-games">
+            <div class="hero-banner" onclick="toastMsg('ゲーム詳細へ')">
+                <div class="hero-bg"></div>
+                <div class="hero-shimmer"></div>
+                <div class="hero-app-icon"><!-- TODO: 必要なデータ - アイコン --></div>
+                <div class="hero-eyebrow">注目のゲーム</div>
+                <div class="hero-title"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                <div class="hero-desc"><!-- TODO: 必要なデータ - ゲームの紹介文 --></div>
+            </div>
+
+            <div class="cat-chips">
+                <div class="cat-chip active">すべて</div>
+                <div class="cat-chip">アクション</div>
+                <div class="cat-chip">パズル</div>
+                <div class="cat-chip">レーシング</div>
+                <div class="cat-chip">RPG</div>
+                <div class="cat-chip">スポーツ</div>
+                <div class="cat-chip">カード</div>
+            </div>
+
+            <div class="section-header" style="margin-top:0">
+                <span class="section-title">トップチャート</span>
+                <a class="section-more" href="#">すべて表示</a>
+            </div>
+            <div class="app-list">
+                <!-- TODO: 必要なデータ - トップゲームリスト -->
+                <div class="app-row" onclick="toastMsg('ゲーム詳細へ')">
+                    <span class="app-row-num">1</span>
+                    <div class="app-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-info">
+                        <div class="app-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                        <div class="app-category"><!-- TODO: 必要なデータ - カテゴリ --></div>
+                    </div>
+                    <button class="app-get-btn" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                </div>
+                <div class="app-row" onclick="toastMsg('ゲーム詳細へ')">
+                    <span class="app-row-num">2</span>
+                    <div class="app-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-info">
+                        <div class="app-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                        <div class="app-category"><!-- TODO: 必要なデータ - カテゴリ --></div>
+                    </div>
+                    <button class="app-get-btn installed" onclick="event.stopPropagation(); toastMsg('開く')">開く</button>
+                </div>
+                <div class="app-row" onclick="toastMsg('ゲーム詳細へ')">
+                    <span class="app-row-num">3</span>
+                    <div class="app-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-info">
+                        <div class="app-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                        <div class="app-category"><!-- TODO: 必要なデータ - カテゴリ --></div>
+                    </div>
+                    <button class="app-get-btn" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">¥<!-- TODO: 必要なデータ - 価格 --></button>
+                </div>
+            </div>
+
+            <div class="section-header">
+                <span class="section-title">新着ゲーム</span>
+                <a class="section-more" href="#">すべて表示</a>
+            </div>
+            <div class="app-grid">
+                <!-- TODO: 必要なデータ - 新着ゲームグリッド -->
+                <div class="app-grid-card" onclick="toastMsg('ゲーム詳細へ')">
+                    <div class="app-grid-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-grid-info">
+                        <div class="app-grid-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                        <div class="app-grid-sub"><!-- TODO: 必要なデータ - ゲーム説明 --></div>
+                        <div class="app-grid-footer">
+                            <span class="app-free">無料</span>
+                            <button class="app-get-btn btn-sm" style="padding:5px 14px;font-size:12px;" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="app-grid-card" onclick="toastMsg('ゲーム詳細へ')">
+                    <div class="app-grid-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-grid-info">
+                        <div class="app-grid-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                        <div class="app-grid-sub"><!-- TODO: 必要なデータ - ゲーム説明 --></div>
+                        <div class="app-grid-footer">
+                            <span class="app-price">¥<!-- TODO: 必要なデータ - 価格 --></span>
+                            <button class="app-get-btn btn-sm" style="padding:5px 14px;font-size:12px;" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="app-grid-card" onclick="toastMsg('ゲーム詳細へ')">
+                    <div class="app-grid-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-grid-info">
+                        <div class="app-grid-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                        <div class="app-grid-sub"><!-- TODO: 必要なデータ - ゲーム説明 --></div>
+                        <div class="app-grid-footer">
+                            <span class="app-free">無料</span>
+                            <button class="app-get-btn btn-sm" style="padding:5px 14px;font-size:12px;" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="app-grid-card" onclick="toastMsg('ゲーム詳細へ')">
+                    <div class="app-grid-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-grid-info">
+                        <div class="app-grid-name"><!-- TODO: 必要なデータ - ゲーム名 --></div>
+                        <div class="app-grid-sub"><!-- TODO: 必要なデータ - ゲーム説明 --></div>
+                        <div class="app-grid-footer">
+                            <span class="app-price">¥<!-- TODO: 必要なデータ - 価格 --></span>
+                            <button class="app-get-btn btn-sm" style="padding:5px 14px;font-size:12px;" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page" id="page-apps">
+            <div class="hero-banner" onclick="toastMsg('アプリ詳細へ')">
+                <div class="hero-bg" style="background:linear-gradient(135deg,#0d0d1a 0%,#0a2540 60%,#0d4d3b 100%)"></div>
+                <div class="hero-shimmer"></div>
+                <div class="hero-app-icon"><!-- TODO: 必要なデータ - フィーチャーアプリアイコン --></div>
+                <div class="hero-eyebrow">今週のピックアップ</div>
+                <div class="hero-title"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                <div class="hero-desc"><!-- TODO: 必要なデータ - アプリ紹介文 --></div>
+            </div>
+
+            <div class="section-header" style="margin-top:0">
+                <span class="section-title">おすすめアプリ</span>
+                <a class="section-more" href="#">すべて表示</a>
+            </div>
+            <div class="featured-strip">
+                <div class="feat-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="feat-card-img"><!-- TODO: 必要なデータ --></div>
+                    <div class="feat-card-body">
+                        <div class="feat-card-category">仕事効率化</div>
+                        <div class="feat-card-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="feat-card-sub"><!-- TODO: 必要なデータ --></div>
+                    </div>
+                </div>
+                <div class="feat-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="feat-card-img" style="background:#f5f0ff;"><!-- TODO: 必要なデータ --></div>
+                    <div class="feat-card-body">
+                        <div class="feat-card-category">グラフィック＆デザイン</div>
+                        <div class="feat-card-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="feat-card-sub"><!-- TODO: 必要なデータ --></div>
+                    </div>
+                </div>
+                <div class="feat-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="feat-card-img" style="background:#fffbf0;"><!-- TODO: 必要なデータ --></div>
+                    <div class="feat-card-body">
+                        <div class="feat-card-category">ファイナンス</div>
+                        <div class="feat-card-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="feat-card-sub"><!-- TODO: 必要なデータ --></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section-header">
+                <span class="section-title">トップ無料アプリ</span>
+                <a class="section-more" href="#">すべて表示</a>
+            </div>
+            <div class="app-list">
+                <!-- TODO: 必要なデータ - トップ無料アプリリスト (各アプリ: アイコン、名前、カテゴリ、評価) -->
+                <div class="app-row" onclick="toastMsg('アプリ詳細へ')">
+                    <span class="app-row-num">1</span>
+                    <div class="app-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-info">
+                        <div class="app-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="app-category"><!-- TODO: 必要なデータ - カテゴリ --></div>
+                    </div>
+                    <button class="app-get-btn" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                </div>
+                <div class="app-row" onclick="toastMsg('アプリ詳細へ')">
+                    <span class="app-row-num">2</span>
+                    <div class="app-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-info">
+                        <div class="app-name"><!-- TODO: 必要なデータ --></div>
+                        <div class="app-category"><!-- TODO: 必要なデータ --></div>
+                    </div>
+                    <button class="app-get-btn installed" onclick="event.stopPropagation()">開く</button>
+                </div>
+                <div class="app-row" onclick="toastMsg('アプリ詳細へ')">
+                    <span class="app-row-num">3</span>
+                    <div class="app-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-info">
+                        <div class="app-name"><!-- TODO: 必要なデータ --></div>
+                        <div class="app-category"><!-- TODO: 必要なデータ --></div>
+                    </div>
+                    <button class="app-get-btn" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                </div>
+            </div>
+
+            <div class="section-header">
+                <span class="section-title">新着＆注目のアップデート</span>
+                <a class="section-more" href="#">すべて表示</a>
+            </div>
+            <div class="app-grid">
+                <div class="app-grid-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="app-grid-icon"><!-- TODO: 必要なデータ --></div>
+                    <div class="app-grid-info">
+                        <div class="app-grid-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="app-grid-sub"><!-- TODO: 必要なデータ - アプリ説明 --></div>
+                        <div class="app-grid-footer">
+                            <span class="app-free">無料</span>
+                            <button class="app-get-btn btn-sm" style="padding:5px 14px;font-size:12px;" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="app-grid-card" onclick="toastMsg('アプリ詳細へ')">
+                    <div class="app-grid-icon">🌐<!-- TODO: 必要なデータ --></div>
+                    <div class="app-grid-info">
+                        <div class="app-grid-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                        <div class="app-grid-sub"><!-- TODO: 必要なデータ - アプリ説明 --></div>
+                        <div class="app-grid-footer">
+                            <span class="app-price">¥<!-- TODO: 必要なデータ - 価格 --></span>
+                            <button class="app-get-btn btn-sm" style="padding:5px 14px;font-size:12px;" onclick="event.stopPropagation(); toastMsg('ダウンロード開始')">入手</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="page" id="page-search">
+            <div class="section-title" style="font-size:28px; margin-bottom:20px;">検索</div>
+            <div class="search-big">
+                <span class="material-symbols-outlined">search</span>
+                <label for="search-input"></label><input type="text" placeholder="アプリやゲームを検索" id="search-input" oninput="handleSearch(this.value)">
+            </div>
+
+            <div id="search-trending">
+                <div class="section-header" style="margin-top:0">
+                    <span class="section-title" style="font-size:17px;">急上昇中</span>
+                </div>
+                <div class="trending-list">
+                    <!-- TODO: 必要なデータ - トレンドアプリ一覧 (各: アイコン、名前、カテゴリ) -->
+                    <div class="trending-item" onclick="toastMsg('アプリ詳細へ')">
+                        <span class="trending-num">1</span>
+                        <div class="trending-icon-wrap"><!-- TODO: 必要なデータ --></div>
+                        <div>
+                            <div class="trending-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                            <div class="trending-category"><!-- TODO: 必要なデータ - カテゴリ --></div>
+                        </div>
+                        <span class="trending-arrow">›</span>
+                    </div>
+                    <div class="trending-item" onclick="toastMsg('アプリ詳細へ')">
+                        <span class="trending-num">2</span>
+                        <div class="trending-icon-wrap"><!-- TODO: 必要なデータ --></div>
+                        <div>
+                            <div class="trending-name"><!-- TODO: 必要なデータ --></div>
+                            <div class="trending-category"><!-- TODO: 必要なデータ --></div>
+                        </div>
+                        <span class="trending-arrow">›</span>
+                    </div>
+                    <div class="trending-item" onclick="toastMsg('アプリ詳細へ')">
+                        <span class="trending-num">3</span>
+                        <div class="trending-icon-wrap"><!-- TODO: 必要なデータ --></div>
+                        <div>
+                            <div class="trending-name"><!-- TODO: 必要なデータ --></div>
+                            <div class="trending-category"><!-- TODO: 必要なデータ --></div>
+                        </div>
+                        <span class="trending-arrow">›</span>
+                    </div>
+                    <div class="trending-item" onclick="toastMsg('アプリ詳細へ')">
+                        <span class="trending-num">4</span>
+                        <div class="trending-icon-wrap"><!-- TODO: 必要なデータ --></div>
+                        <div>
+                            <div class="trending-name"><!-- TODO: 必要なデータ --></div>
+                            <div class="trending-category"><!-- TODO: 必要なデータ --></div>
+                        </div>
+                        <span class="trending-arrow">›</span>
+                    </div>
+                    <div class="trending-item" onclick="toastMsg('アプリ詳細へ')">
+                        <span class="trending-num">5</span>
+                        <div class="trending-icon-wrap"><!-- TODO: 必要なデータ --></div>
+                        <div>
+                            <div class="trending-name"><!-- TODO: 必要なデータ --></div>
+                            <div class="trending-category"><!-- TODO: 必要なデータ --></div>
+                        </div>
+                        <span class="trending-arrow">›</span>
+                    </div>
+                </div>
+
+                <div class="section-header">
+                    <span class="section-title" style="font-size:17px;">カテゴリから探す</span>
+                </div>
+                <div class="cat-chips">
+                    <!-- TODO: 必要なデータ - カテゴリ一覧 -->
+                    <div class="cat-chip">デベロッパーツール</div>
+                    <div class="cat-chip">写真・ビデオ</div>
+                    <div class="cat-chip">ミュージック</div>
+                    <div class="cat-chip">教育</div>
+                    <div class="cat-chip">ヘルスケア</div>
+                    <div class="cat-chip">旅行</div>
+                    <div class="cat-chip">フード＆ドリンク</div>
+                    <div class="cat-chip">ユーティリティ</div>
+                    <div class="cat-chip">ショッピング</div>
+                    <div class="cat-chip">ニュース</div>
+                </div>
+            </div>
+
+            <div id="search-results" style="display:none">
+                <div style="font-size:13px;color:var(--g400);margin-bottom:16px;" id="search-result-label">検索結果</div>
+                <div class="app-list" id="search-result-list">
+                    <!-- Auto generate by JS-->
+                </div>
+            </div>
+        </div>
+
+        <div class="page" id="page-updates">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:28px;">
+                <div class="section-title" style="font-size:28px;">アップデート</div>
+                <button class="app-get-btn" onclick="toastMsg('すべてをアップデート')">すべてをアップデート</button>
+            </div>
+
+            <div class="section-header" style="margin-top:0">
+                <span class="section-title" style="font-size:15px;font-weight:600;">保留中</span>
+                <span style="font-size:13px;color:var(--g400);font-family:var(--mono);"><!-- TODO: 必要なデータ - 件数 --> 件</span>
+            </div>
+
+            <!-- TODO: 必要なデータ - 保留中のアップデート一覧 (各: アイコン、名前、バージョン、更新内容) -->
+            <div class="update-card">
+                <div class="update-icon"><!-- TODO: 必要なデータ - アイコン --></div>
+                <div class="update-info">
+                    <div class="update-name"><!-- TODO: 必要なデータ - アプリ名 --></div>
+                    <div class="update-version">バージョン <!-- TODO: 必要なデータ - バージョン番号 --> • <!-- TODO: 必要なデータ - ファイルサイズ --></div>
+                    <div class="update-notes"><!-- TODO: 必要なデータ - アップデート内容・変更点 --></div>
+                </div>
+                <button class="update-btn" onclick="toastMsg('アップデート中…')">アップデート</button>
+            </div>
+            <div class="update-card">
+                <div class="update-icon"><!-- TODO: 必要なデータ - アイコン --></div>
+                <div class="update-info">
+                    <div class="update-name"><!-- TODO: 必要なデータ --></div>
+                    <div class="update-version">バージョン <!-- TODO: 必要なデータ --> • <!-- TODO: 必要なデータ --></div>
+                    <div class="update-notes"><!-- TODO: 必要なデータ --></div>
+                </div>
+                <button class="update-btn" onclick="toastMsg('アップデート中…')">アップデート</button>
+            </div>
+            <div class="update-card">
+                <div class="update-icon"><!-- TODO: 必要なデータ --></div>
+                <div class="update-info">
+                    <div class="update-name"><!-- TODO: 必要なデータ --></div>
+                    <div class="update-version">バージョン <!-- TODO: 必要なデータ --> • <!-- TODO: 必要なデータ --></div>
+                    <div class="update-notes"><!-- TODO: 必要なデータ --></div>
+                </div>
+                <button class="update-btn" onclick="toastMsg('アップデート中…')">アップデート</button>
+            </div>
+
+            <div class="section-header">
+                <span class="section-title" style="font-size:15px;font-weight:600;">最近アップデート済み</span>
+            </div>
+            <!-- TODO: 必要なデータ - 最近アップデート済みのアプリ一覧 -->
+            <div class="update-card">
+                <div class="update-icon"><!-- TODO: 必要なデータ --></div>
+                <div class="update-info">
+                    <div class="update-name"><!-- TODO: 必要なデータ --></div>
+                    <div class="update-version">バージョン <!-- TODO: 必要なデータ --> • <!-- TODO: 必要なデータ --> 前</div>
+                    <div class="update-notes"><!-- TODO: 必要なデータ - 更新内容 --></div>
+                </div>
+                <button class="update-btn installed" style="background:var(--g100);color:var(--g600);">開く</button>
+            </div>
+            <div class="update-card">
+                <div class="update-icon"><!-- TODO: 必要なデータ --></div>
+                <div class="update-info">
+                    <div class="update-name"><!-- TODO: 必要なデータ --></div>
+                    <div class="update-version">バージョン <!-- TODO: 必要なデータ --> • <!-- TODO: 必要なデータ --> 前</div>
+                    <div class="update-notes"><!-- TODO: 必要なデータ --></div>
+                </div>
+                <button class="update-btn installed" style="background:var(--g100);color:var(--g600);">開く</button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="script.js"></script>
 </body>
 </html>

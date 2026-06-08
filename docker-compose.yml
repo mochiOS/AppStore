@@ -1,0 +1,16 @@
+services:
+  appstore:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: appstore
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - appstore_data:/var/www/html/data
+    environment:
+      APP_ENV: production
+
+volumes:
+  appstore_data:

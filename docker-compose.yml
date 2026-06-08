@@ -3,10 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: appstore
+    container_name: mochi-appstore
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "127.0.0.1:3001:80"
     volumes:
       - appstore_data:/var/www/html/data
     environment:

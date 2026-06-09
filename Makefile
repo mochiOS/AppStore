@@ -6,7 +6,7 @@ DATA_DIR = data
 run:
 	@mkdir -p $(DATA_DIR)
 	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php & \
-	cd src/public && $(PHP) -S localhost:$(PUBLIC_PORT)
+	cd src/public/console && $(PHP) -S localhost:$(PUBLIC_PORT)
 
 api:
 	@cd src/api && $(PHP) -S localhost:$(API_PORT) router.php

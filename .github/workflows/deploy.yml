@@ -44,5 +44,7 @@ jobs:
 
           docker compose up -d --build
 
+          make ci
+
           docker image prune -f
           EOF

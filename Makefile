@@ -20,6 +20,9 @@ clean:
 migrate:
 	@$(PHP) src/cli/migrate.php
 
+ci:
+	docker compose exec -T appstore php src/cli/migrate.php
+
 data: migrate
 
 test:

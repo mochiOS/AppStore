@@ -1,0 +1,108 @@
+name: Notify infrastructure changes
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check changed infrastructure files
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- mochi-infra-change-notice -->';
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                owner,
+                repo,
+                pull_number,
+                per_page: 100
+              }
+            );
+
+            const patterns = [
+              /^Dockerfile$/,
+              /^Dockerfile\..+$/,
+              /^docker-compose\.ya?ml$/,
+              /^docker-compose\..+\.ya?ml$/,
+              /^docker\/.+/,
+              /^\.github\/workflows\/.+\.ya?ml$/,
+              /^\.github\/actions\/.+/,
+            ];
+
+            const matched = files
+              .map(file => file.filename)
+              .filter(filename => patterns.some(pattern => pattern.test(filename)));
+
+            if (matched.length === 0) {
+              core.info('No infrastructure-related files changed.');
+              return;
+            }
+
+            const fileList = matched
+              .map(filename => `- \`${filename}\``)
+              .join('\n');
+
+            const body = `${marker}
+            ⚠️ **Infrastructure / CI-CD related files changed**
+
+            This PR modifies Docker, deployment, or CI/CD related files.
+
+            Changed files:
+
+            ${fileList}
+
+            Please review carefully before merging:
+            - Docker build/runtime behavior
+            - docker-compose service, volume, and port changes
+            - deployment workflow changes
+            - migration or production data impact
+            `.replace(/^ {12}/gm, '');
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner,
+                repo,
+                issue_number: pull_number,
+                per_page: 100
+              }
+            );
+
+            const existing = comments.find(comment =>
+              comment.user.type === 'Bot' && comment.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: pull_number,
+                body
+              });
+            }

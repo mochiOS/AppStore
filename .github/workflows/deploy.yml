@@ -37,7 +37,7 @@ jobs:
           ssh -i ~/.ssh/oracle_deploy_key -p "$PORT" "$ORACLE_USER@$ORACLE_HOST" << 'EOF'
           set -eu
 
-          cd /home/jine/AppStore
+          cd /srv/appstore/repo
 
           git fetch origin main
           git reset --hard origin/main

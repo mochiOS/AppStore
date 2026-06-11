@@ -1,9 +1,5 @@
 <?php
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
-
 if (!defined('ROOT')) {
     define('ROOT', __DIR__ . '/../../');
 }
@@ -13,6 +9,29 @@ require_once ROOT . 'helper/Database.php';
 require_once ROOT . 'helper/ApiRequest.php';
 require_once ROOT . 'helper/ApiResponse.php';
 require_once ROOT . 'helper/AppConfig.php';
+require_once __DIR__ . '/../cors.php';
+
+$appConfig = AppConfig::get();
+
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_name((string) ($appConfig['session_cookie_name'] ?? 'mochios_appstore_session'));
+
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'domain' => '',
+        'secure' => ($appConfig['env'] ?? 'local') === 'production',
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+
+    session_start();
+}
+
+if (empty($_SESSION['csrf_token']) || !is_string($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 require_once ROOT . 'helper/AppRepository.php';
 require_once ROOT . 'helper/ReleaseRepository.php';
 require_once ROOT . 'helper/AppCatalog.php';
@@ -34,17 +53,7 @@ require_once ROOT . 'helper/TeamRepository.php';
 require_once __DIR__ . '/ApiContext.php';
 require_once __DIR__ . '/guards.php';
 
-$appConfig = AppConfig::get();
-
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-
-if (in_array($origin, $appConfig['allowed_origins'], true)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-    header('Vary: Origin');
-    header('Access-Control-Allow-Credentials: true');
-    header('Access-Control-Allow-Headers: Content-Type');
-    header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-}
+appstoreApplyCors($appConfig);
 
 $method = ApiRequest::method();
 
@@ -52,6 +61,8 @@ if ($method === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
+
+requireValidCsrfToken($appConfig, $method);
 
 $db = Database::get();
 
@@ -75,7 +86,11 @@ return new ApiContext(
     certificateAuthority: CertificateAuthority::fromAppConfig($appConfig),
     storage: new PackageStorage(ROOT),
     adminRepo: new AdminRepository($db),
-    packageSignatureVerifier: new PackageSignatureVerifier(),
+    packageSignatureVerifier: new PackageSignatureVerifier(
+        (string) ($appConfig['msign_path'] ?? '/usr/local/bin/msign'),
+        (int) ($appConfig['msign_timeout_seconds'] ?? 10),
+        (int) ($appConfig['msign_max_output_bytes'] ?? 65536),
+    ),
     teamRepo: new TeamRepository($db),
     appConfig: $appConfig,
     limit: ApiRequest::queryInt('limit', 50, 0),

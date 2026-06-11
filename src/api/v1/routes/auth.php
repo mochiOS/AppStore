@@ -1,6 +1,18 @@
 <?php
 
 return function (ApiContext $ctx): bool {
+    if ($ctx->path === '/auth/csrf') {
+        if ($ctx->method !== 'GET') {
+            ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+            return true;
+        }
+
+        ApiResponse::json([
+            'csrf_token' => $_SESSION['csrf_token'],
+        ]);
+        return true;
+    }
+
     if ($ctx->path === '/auth/me') {
         if ($ctx->method !== 'GET') {
             ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
@@ -35,6 +47,7 @@ return function (ApiContext $ctx): bool {
             'authenticated' => true,
             'developer_id' => $developerId,
             'user' => $user,
+            'csrf_token' => $_SESSION['csrf_token'],
         ]);
         return true;
     }
@@ -68,6 +81,15 @@ return function (ApiContext $ctx): bool {
         $_SESSION = [];
 
         if (session_status() === PHP_SESSION_ACTIVE) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', [
+                'expires' => time() - 42000,
+                'path' => $params['path'] ?? '/',
+                'domain' => $params['domain'] ?? '',
+                'secure' => (bool) ($params['secure'] ?? false),
+                'httponly' => (bool) ($params['httponly'] ?? true),
+                'samesite' => $params['samesite'] ?? 'Lax',
+            ]);
             session_destroy();
         }
 

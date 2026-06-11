@@ -2,20 +2,11 @@
 
 header('X-AppStore-Router: hit');
 
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-$allowedOrigins = [
-    'http://localhost:3000',
-    'https://console.mochios.org',
-    'https://store.mochios.org',
-];
+require_once __DIR__ . '/../helper/AppConfig.php';
+require_once __DIR__ . '/cors.php';
 
-if (in_array($origin, $allowedOrigins, true)) {
-    header('Access-Control-Allow-Origin: ' . $origin);
-    header('Vary: Origin');
-    header('Access-Control-Allow-Credentials: true');
-    header('Access-Control-Allow-Headers: Content-Type, Authorization');
-    header('Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS');
-}
+$appConfig = AppConfig::get();
+appstoreApplyCors($appConfig);
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
     http_response_code(204);

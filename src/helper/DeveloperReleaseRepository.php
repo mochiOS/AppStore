@@ -79,6 +79,26 @@ class DeveloperReleaseRepository
         return $release === false ? null : $release;
     }
 
+    public function findDeveloperIdByReleaseId(string $releaseId): ?string
+    {
+        $stmt = $this->db->prepare(
+            'SELECT bi.developer_id
+             FROM developer_releases dr
+             INNER JOIN bundle_ids bi
+                ON bi.bundle_id = dr.bundle_id
+             WHERE dr.release_id = :release_id
+             LIMIT 1'
+        );
+
+        $stmt->execute([
+            ':release_id' => $releaseId,
+        ]);
+
+        $developerId = $stmt->fetchColumn();
+
+        return is_string($developerId) && $developerId !== '' ? $developerId : null;
+    }
+
     public function findOwnedById(string $releaseId, string $developerId): ?array
     {
         $stmt = $this->db->prepare(

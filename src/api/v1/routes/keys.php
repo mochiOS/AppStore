@@ -36,6 +36,15 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
+        if (!PublicKeyRepository::isValidEd25519PublicKey($publicKey)) {
+            ApiResponse::error(
+                'VALIDATION_ERROR',
+                'public_key must be a base64-encoded 32-byte Ed25519 public key',
+                422
+            );
+            return true;
+        }
+
         try {
             $key = $ctx->publicKeyRepo->create($developerId, $keyId, $publicKey);
         } catch (PDOException $e) {

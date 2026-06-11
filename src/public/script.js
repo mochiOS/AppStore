@@ -32,12 +32,16 @@ function handleSearch(val) {
         results.style.display  = '';
         label.textContent = `"${val}" の検索結果`;
         // TODO: 必要なデータ - 検索API連携 / 実際の検索結果をここに挿入
-        document.getElementById('search-result-list').innerHTML = `
-            <div style="text-align:center;padding:40px 20px;color:var(--g400);font-size:13px;">
-                <!-- TODO: 必要なデータ - 検索結果 -->
-                「${val}」に関するアプリが表示されます
-            </div>
-        `;
+        const list = document.getElementById('search-result-list');
+        const empty = document.createElement('div');
+
+        empty.style.textAlign = 'center';
+        empty.style.padding = '40px 20px';
+        empty.style.color = 'var(--g400)';
+        empty.style.fontSize = '13px';
+        empty.textContent = `「${val}」に関するアプリが表示されます`;
+
+        list.replaceChildren(empty);
     }
 }
 

@@ -2,6 +2,12 @@ server {
     listen 80;
     server_name store.mochios.org;
 
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
     location / {
         proxy_pass http://127.0.0.1:3001;
         proxy_http_version 1.1;
@@ -15,6 +21,12 @@ server {
 server {
     listen 80;
     server_name console.mochios.org;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
     location / {
         proxy_pass http://127.0.0.1:3001;

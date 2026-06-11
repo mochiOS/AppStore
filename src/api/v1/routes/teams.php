@@ -1,17 +1,21 @@
 <?php
 
-function normalizeTeamSlug(string $slug): string
-{
-    $slug = strtolower(trim($slug));
-    $slug = preg_replace('/[^a-z0-9-]+/', '-', $slug) ?? '';
-    $slug = trim($slug, '-');
+if (!function_exists('normalizeTeamSlug')) {
+    function normalizeTeamSlug(string $slug): string
+    {
+        $slug = strtolower(trim($slug));
+        $slug = preg_replace('/[^a-z0-9-]+/', '-', $slug) ?? '';
+        $slug = trim($slug, '-');
 
-    return $slug;
+        return $slug;
+    }
 }
 
-function isValidDeveloperId(string $developerId): bool
-{
-    return preg_match('/^dev_[0-9a-f]{32}$/', $developerId) === 1;
+if (!function_exists('isValidDeveloperId')) {
+    function isValidDeveloperId(string $developerId): bool
+    {
+        return preg_match('/^dev_[0-9a-f]{32}$/', $developerId) === 1;
+    }
 }
 
 return function (ApiContext $ctx): bool {

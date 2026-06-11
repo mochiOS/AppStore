@@ -56,7 +56,27 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
+        $releaseDeveloperId = $ctx->developerReleaseRepo->findDeveloperIdByReleaseId($releaseId);
+        $keyId = (string) ($current['certificate_id'] ?? '');
+        if (
+            $releaseDeveloperId === null
+            || $keyId === ''
+            || $ctx->publicKeyRepo->findActiveOwnedByKeyId($keyId, $releaseDeveloperId) === null
+        ) {
+            ApiResponse::error(
+                'SIGNING_KEY_NOT_ACTIVE',
+                'Release signing key is not active',
+                409
+            );
+            return true;
+        }
+
         $release = $ctx->developerReleaseRepo->approve($releaseId, $adminId);
+
+        writeAuditLog($ctx, $adminId, 'release.approve', 'release', $releaseId, [
+            'bundle_id' => $current['bundle_id'],
+            'version' => $current['version'],
+        ]);
 
         ApiResponse::json([
             'release' => $release,
@@ -103,6 +123,11 @@ return function (ApiContext $ctx): bool {
             $adminId,
             $message
         );
+
+        writeAuditLog($ctx, $adminId, 'release.reject', 'release', $releaseId, [
+            'bundle_id' => $current['bundle_id'],
+            'version' => $current['version'],
+        ]);
 
         ApiResponse::json([
             'release' => $release,

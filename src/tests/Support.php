@@ -67,10 +67,22 @@ function apiJsonRequest(
     array $query = [],
     string $method = 'GET',
     ?array $jsonBody = null,
-    array $session = []
+    array $session = [],
+    array $headers = []
 ): array {
     $_SERVER['REQUEST_METHOD'] = $method;
     $_SERVER['REQUEST_URI'] = $path . ($query === [] ? '' : '?' . http_build_query($query));
+    unset(
+        $_SERVER['HTTP_ORIGIN'],
+        $_SERVER['HTTP_SEC_FETCH_SITE'],
+        $_SERVER['HTTP_X_CSRF_TOKEN'],
+        $_SERVER['HTTP_X_ADMIN_TOKEN']
+    );
+
+    foreach ($headers as $name => $value) {
+        $_SERVER['HTTP_' . strtoupper(str_replace('-', '_', $name))] = $value;
+    }
+
     $_GET = $query;
     $_POST = [];
 
@@ -94,6 +106,16 @@ function apiJsonRequest(
         'status' => $status === false ? 200 : $status,
         'body' => (string) $body,
     ];
+}
+
+function csrfSession(array $session = []): array
+{
+    return ['csrf_token' => 'test-csrf-token'] + $session;
+}
+
+function csrfHeaders(array $headers = []): array
+{
+    return ['X-CSRF-Token' => 'test-csrf-token'] + $headers;
 }
 
 function generatePemKeyAndCsr(string $commonName): array

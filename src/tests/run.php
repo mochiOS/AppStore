@@ -11,9 +11,13 @@ require_once __DIR__ . '/../helper/ApiRequest.php';
 require_once __DIR__ . '/../helper/ApiResponse.php';
 require_once __DIR__ . '/../helper/PackageStorage.php';
 require_once __DIR__ . '/../helper/AppConfig.php';
+require_once __DIR__ . '/../api/cors.php';
 require_once __DIR__ . '/../helper/DeveloperRepository.php';
 require_once __DIR__ . '/../helper/DeveloperCertificateRepository.php';
 require_once __DIR__ . '/../helper/CertificateAuthority.php';
+require_once __DIR__ . '/../helper/PublicKeyRepository.php';
+require_once __DIR__ . '/../helper/PackageInspectService.php';
+require_once __DIR__ . '/../helper/PackageSignatureVerifier.php';
 
 require_once __DIR__ . '/Support.php';
 
@@ -96,6 +100,7 @@ require_once __DIR__ . '/PathsTest.php';
 require_once __DIR__ . '/DeveloperRepositoryTest.php';
 require_once __DIR__ . '/DeveloperCaTest.php';
 require_once __DIR__ . '/ApiTest.php';
+require_once __DIR__ . '/SecurityTest.php';
 
 $failures = 0;
 $results = [];

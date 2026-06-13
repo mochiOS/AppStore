@@ -293,8 +293,32 @@ paths:
                     oneOf:
                       - $ref: "#/components/schemas/OAuthUser"
                       - type: "null"
+                  csrf_token:
+                    type: string
+                    description: CSRF token to send as X-CSRF-Token on state-changing requests.
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /auth/csrf:
+    get:
+      tags: [Auth]
+      summary: Get CSRF token for state-changing requests
+      security: []
+      responses:
+        "200":
+          description: CSRF token for this session.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [csrf_token]
+                additionalProperties: false
+                properties:
+                  csrf_token:
+                    type: string
+                    description: Send this value as X-CSRF-Token on POST, PUT, PATCH, and DELETE requests.
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
 
   /developers/me:
     get:
@@ -319,6 +343,9 @@ paths:
     post:
       tags: [Auth]
       summary: Logout current session
+      security:
+        - sessionCookie: []
+          csrfToken: []
       responses:
         "200":
           description: Logged out.
@@ -357,6 +384,9 @@ paths:
     post:
       tags: [Developer Apps]
       summary: Create developer app from reserved Bundle ID
+      security:
+        - sessionCookie: []
+          csrfToken: []
       requestBody:
         required: true
         content:
@@ -428,6 +458,9 @@ paths:
     post:
       tags: [Developer Apps, Teams]
       summary: Assign app to a team or return it to personal ownership
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/BundleId"
       requestBody:
@@ -493,6 +526,9 @@ paths:
     post:
       tags: [Developer Releases]
       summary: Upload signed package and create draft release
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/BundleId"
       requestBody:
@@ -561,6 +597,9 @@ paths:
     post:
       tags: [Developer Releases]
       summary: Submit draft or rejected release for review
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ReleaseId"
       responses:
@@ -605,6 +644,9 @@ paths:
     post:
       tags: [Public Keys]
       summary: Register public key
+      security:
+        - sessionCookie: []
+          csrfToken: []
       requestBody:
         required: true
         content:
@@ -646,6 +688,9 @@ paths:
     post:
       tags: [Public Keys]
       summary: Revoke public key
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - name: key_id
           in: path
@@ -693,6 +738,9 @@ paths:
     post:
       tags: [Bundle IDs]
       summary: Reserve Bundle ID
+      security:
+        - sessionCookie: []
+          csrfToken: []
       requestBody:
         required: true
         content:
@@ -750,6 +798,9 @@ paths:
     post:
       tags: [Teams]
       summary: Create team
+      security:
+        - sessionCookie: []
+          csrfToken: []
       requestBody:
         required: true
         content:
@@ -846,6 +897,9 @@ paths:
     post:
       tags: [Teams]
       summary: Add team member
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/TeamId"
       requestBody:
@@ -888,6 +942,9 @@ paths:
     post:
       tags: [Teams]
       summary: Update team member role
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/TeamId"
         - $ref: "#/components/parameters/DeveloperId"
@@ -935,6 +992,9 @@ paths:
     post:
       tags: [Teams]
       summary: Remove team member
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/TeamId"
         - $ref: "#/components/parameters/DeveloperId"
@@ -982,6 +1042,9 @@ paths:
     post:
       tags: [Certificates]
       summary: Request developer verification
+      security:
+        - sessionCookie: []
+          csrfToken: []
       requestBody:
         required: false
         content:
@@ -1027,6 +1090,9 @@ paths:
     post:
       tags: [Certificates]
       summary: Create certificate signing request
+      security:
+        - sessionCookie: []
+          csrfToken: []
       requestBody:
         required: true
         content:
@@ -1178,6 +1244,9 @@ paths:
     post:
       tags: [Admin Releases]
       summary: Approve submitted release and publish it
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ReleaseId"
       responses:
@@ -1205,6 +1274,9 @@ paths:
     post:
       tags: [Admin Releases]
       summary: Reject submitted release
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/ReleaseId"
       requestBody:
@@ -1271,6 +1343,9 @@ paths:
     post:
       tags: [Admin Certificates]
       summary: Update developer verification status
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/DeveloperId"
       requestBody:
@@ -1313,6 +1388,9 @@ paths:
     post:
       tags: [Admin Certificates]
       summary: Issue certificate from CSR
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/CsrId"
       responses:
@@ -1350,6 +1428,9 @@ paths:
     post:
       tags: [Admin Certificates]
       summary: Reject certificate signing request
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/CsrId"
       requestBody:
@@ -1386,6 +1467,9 @@ paths:
     post:
       tags: [Admin Certificates]
       summary: Revoke certificate
+      security:
+        - sessionCookie: []
+          csrfToken: []
       parameters:
         - $ref: "#/components/parameters/CertificateId"
       requestBody:
@@ -1428,6 +1512,11 @@ components:
       in: cookie
       name: PHPSESSID
       description: PHP session cookie. Frontend sends it with credentials include.
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: CSRF token returned by /auth/csrf or /auth/me. Required for POST, PUT, PATCH, and DELETE requests.
 
   parameters:
     Limit:

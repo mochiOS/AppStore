@@ -179,6 +179,13 @@ mochiOS はインストール時に以下を検証する想定である。
 
 ストアは release metadata に `package_hash`、`signature`、`certificate_id` などの検証材料を含める。
 
+hash名は以下の意味で扱う。
+
+- `package_sha256`: アップロードされた `.pkg` raw bytes の SHA-256
+- `content_hash`: `META/signature.toml` を除外した canonical content hash
+- `manifest_hash`: `manifest.toml` raw bytes の SHA-256
+- `package_hash`: 後方互換のため残る既存名。現状は `content_hash` と同じ意味として扱う
+
 ## 予定
 
 将来的に以下の機能を追加可能とする。

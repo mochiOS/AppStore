@@ -30,13 +30,19 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
+        $verification = $ctx->certificateRepo->updateVerification(
+            $developerId,
+            $status,
+            $note,
+            $adminId
+        );
+
+        writeAuditLog($ctx, $adminId, 'developer.verification.update', 'developer', $developerId, [
+            'verification_status' => $status,
+        ]);
+
         ApiResponse::json([
-            'verification' => $ctx->certificateRepo->updateVerification(
-                $developerId,
-                $status,
-                $note,
-                $adminId
-            ),
+            'verification' => $verification,
         ]);
         return true;
     }
@@ -47,7 +53,7 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        $admin = requireAdminDeveloper($ctx);
+        $admin = requireOwnerDeveloper($ctx);
         $adminId = $admin['developer_id'];
 
         if (!$ctx->certificateAuthority->isConfigured()) {
@@ -73,6 +79,11 @@ return function (ApiContext $ctx): bool {
             $adminId,
             $issued
         );
+
+        writeAuditLog($ctx, $adminId, 'certificate.issue', 'certificate', $certificate['certificate_id'], [
+            'csr_id' => $csr['csr_id'],
+            'developer_id' => $csr['developer_id'],
+        ]);
 
         ApiResponse::json([
             'certificate' => $certificate,
@@ -102,6 +113,8 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
+        writeAuditLog($ctx, $adminId, 'certificate_request.reject', 'certificate_request', $matches[1]);
+
         ApiResponse::json([
             'certificate_request' => $csr,
         ]);
@@ -114,7 +127,7 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        requireAdminDeveloper($ctx);
+        $admin = requireOwnerDeveloper($ctx);
 
         $payload = readJsonBody();
         $reason = trim((string) ($payload['reason'] ?? ''));
@@ -129,6 +142,10 @@ return function (ApiContext $ctx): bool {
             ApiResponse::error('CERTIFICATE_NOT_FOUND', 'Certificate not found', 404);
             return true;
         }
+
+        writeAuditLog($ctx, $admin['developer_id'], 'certificate.revoke', 'certificate', $matches[1], [
+            'reason' => $reason,
+        ]);
 
         ApiResponse::json([
             'certificate' => $certificate,

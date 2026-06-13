@@ -88,7 +88,30 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
+        $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+        $fetchSite = strtolower((string) ($_SERVER['HTTP_SEC_FETCH_SITE'] ?? ''));
+        if (
+            ($origin !== '' && !appstoreIsAllowedOrigin($ctx->appConfig, $origin))
+            || $fetchSite === 'cross-site'
+        ) {
+            ApiResponse::error('CSRF_ORIGIN_INVALID', 'Cross-site OAuth initiation is not allowed', 403);
+            return true;
+        }
+
         $provider = ApiRequest::queryString('provider', 'github');
+
+        $pendingProvider = $_SESSION['oauth_provider'] ?? '';
+        $pendingState = $_SESSION['oauth_state'] ?? '';
+        if (
+            is_string($pendingProvider)
+            && is_string($pendingState)
+            && $pendingProvider !== ''
+            && $pendingState !== ''
+            && $pendingProvider !== $provider
+        ) {
+            ApiResponse::error('OAUTH_IN_PROGRESS', 'OAuth login is already in progress', 409);
+            return true;
+        }
 
         $config = Provider::get($provider);
         if ($config === null) {
@@ -96,15 +119,19 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
-        try {
-            $state = bin2hex(random_bytes(32));
-        } catch (Throwable) {
-            ApiResponse::error('OAUTH_STATE_FAILED', 'Failed to create OAuth state', 500);
-            return true;
-        }
+        if (is_string($pendingProvider) && is_string($pendingState) && $pendingProvider === $provider && $pendingState !== '') {
+            $state = $pendingState;
+        } else {
+            try {
+                $state = bin2hex(random_bytes(32));
+            } catch (Throwable) {
+                ApiResponse::error('OAUTH_STATE_FAILED', 'Failed to create OAuth state', 500);
+                return true;
+            }
 
-        $_SESSION['oauth_state'] = $state;
-        $_SESSION['oauth_provider'] = $provider;
+            $_SESSION['oauth_state'] = $state;
+            $_SESSION['oauth_provider'] = $provider;
+        }
 
         $redirectUri = rtrim($ctx->appConfig['api_url'], '/') . '/v1/oauth/callback';
 
@@ -212,8 +239,15 @@ return function (ApiContext $ctx): bool {
             return true;
         }
 
+        if (session_regenerate_id(true) !== true) {
+            http_response_code(500);
+            echo 'Failed to create secure session';
+            return true;
+        }
+
         unset($_SESSION['user_id']);
         $_SESSION['developer_id'] = $developer['developer_id'];
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 
         header('Location: ' . rtrim($ctx->appConfig['frontend_url'], '/') . '/');
         return true;

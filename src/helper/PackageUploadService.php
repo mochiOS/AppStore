@@ -4,14 +4,8 @@ class PackageUploadService
 {
     private const MAX_PACKAGE_SIZE = 128 * 1024 * 1024;
 
-    public function storeUploadedPackage(
-        array $file,
-        string $bundleId,
-        string $version
-    ): array {
-        $this->assertValidPathSegment($bundleId, 'bundle_id');
-        $this->assertValidVersion($version);
-
+    public function validateUploadedPackage(array $file): void
+    {
         if (!isset($file['error'], $file['tmp_name'], $file['size'])) {
             throw new RuntimeException('Invalid upload payload');
         }
@@ -30,11 +24,22 @@ class PackageUploadService
             throw new RuntimeException('Package is too large');
         }
 
-        $tmpPath = (string) $file['tmp_name'];
-
-        if (!is_file($tmpPath)) {
+        if (!is_file((string) $file['tmp_name'])) {
             throw new RuntimeException('Uploaded package file is missing');
         }
+    }
+
+    public function storeUploadedPackage(
+        array $file,
+        string $bundleId,
+        string $version
+    ): array {
+        $this->assertValidPathSegment($bundleId, 'bundle_id');
+        $this->assertValidVersion($version);
+        $this->validateUploadedPackage($file);
+
+        $tmpPath = (string) $file['tmp_name'];
+        $size = (int) $file['size'];
 
         $relativePath = 'data/packages/' . $bundleId . '/' . $version . '.pkg';
         $absolutePath = Paths::dataDir() . '/packages/' . $bundleId . '/' . $version . '.pkg';

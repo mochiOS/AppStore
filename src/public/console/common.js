@@ -5,16 +5,55 @@ window.APP_CONFIG = {
             : "https://api.mochios.org"
 };
 
+let csrfToken = null;
+
 function login(provider = "github") {
     location.href =
         `${window.APP_CONFIG.API_URL}/v1/oauth?provider=${encodeURIComponent(provider)}`;
 }
 
+function isStateChangingMethod(method) {
+    return ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase());
+}
+
+async function getCsrfToken() {
+    if (csrfToken) {
+        return csrfToken;
+    }
+
+    const response = await fetch(`${window.APP_CONFIG.API_URL}/v1/auth/csrf`, {
+        credentials: "include",
+        cache: "no-store"
+    });
+
+    if (!response.ok) {
+        return null;
+    }
+
+    const data = await response.json();
+    csrfToken = data.csrf_token || null;
+
+    return csrfToken;
+}
+
 async function apiFetch(path, options = {}) {
+    const method = (options.method || "GET").toUpperCase();
+    const headers = new Headers(options.headers || {});
+
+    if (isStateChangingMethod(method)) {
+        const token = await getCsrfToken();
+
+        if (token) {
+            headers.set("X-CSRF-Token", token);
+        }
+    }
+
     const response = await fetch(`${window.APP_CONFIG.API_URL}${path}`, {
         credentials: "include",
         cache: "no-store",
-        ...options
+        ...options,
+        method,
+        headers
     });
 
     const text = await response.text();
@@ -43,6 +82,8 @@ async function showMe() {
     if (!result.ok) {
         return null;
     }
+
+    csrfToken = result.data.csrf_token || csrfToken;
 
     return result.data;
 }

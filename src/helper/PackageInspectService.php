@@ -2,14 +2,25 @@
 
 class PackageInspectService
 {
+    private const MAX_COMPRESSED_BYTES = 128 * 1024 * 1024;
+    private const MAX_ENTRIES = 4096;
+    private const MAX_TOTAL_UNPACKED_BYTES = 256 * 1024 * 1024;
+    private const MAX_FILE_BYTES = 64 * 1024 * 1024;
+
     public function inspect(string $packagePath): array
     {
         if (!is_file($packagePath)) {
             throw new RuntimeException('Package file not found');
         }
 
-        $phar = $this->openPackage($packagePath);
-        $files = $this->listFiles($phar);
+        [$phar, $tmpTarGz] = $this->openPackage($packagePath);
+
+        try {
+            $files = $this->listFiles($phar);
+        } finally {
+            unset($phar);
+            @unlink($tmpTarGz);
+        }
 
         if (!isset($files['about.toml'])) {
             throw new RuntimeException('about.toml is missing');
@@ -136,13 +147,19 @@ class PackageInspectService
 
     public function calculateContentHash(string $packagePath): string
     {
-        $phar = $this->openPackage($packagePath);
-        $files = $this->listFiles($phar);
+        [$phar, $tmpTarGz] = $this->openPackage($packagePath);
+
+        try {
+            $files = $this->listFiles($phar);
+        } finally {
+            unset($phar);
+            @unlink($tmpTarGz);
+        }
 
         return $this->calculateContentHashFromFiles($files);
     }
 
-    private function openPackage(string $packagePath): PharData
+    private function openPackage(string $packagePath): array
     {
         $tmp = tempnam(sys_get_temp_dir(), 'mochi_pkg_');
 
@@ -150,24 +167,136 @@ class PackageInspectService
             throw new RuntimeException('Failed to create temporary package path');
         }
 
+        $compressedSize = filesize($packagePath);
+        if ($compressedSize === false || $compressedSize <= 0) {
+            @unlink($tmp);
+            throw new RuntimeException('Package is empty');
+        }
+
+        if ($compressedSize > self::MAX_COMPRESSED_BYTES) {
+            @unlink($tmp);
+            throw new RuntimeException('Package is too large');
+        }
+
         $tmpTarGz = $tmp . '.tar.gz';
         unlink($tmp);
 
         if (!copy($packagePath, $tmpTarGz)) {
+            @unlink($tmpTarGz);
             throw new RuntimeException('Failed to copy package for inspection');
         }
 
         try {
-            return new PharData($tmpTarGz);
+            $this->scanTarGzArchive($tmpTarGz);
+            return [new PharData($tmpTarGz), $tmpTarGz];
         } catch (Throwable $e) {
             @unlink($tmpTarGz);
+
+            if ($e instanceof RuntimeException) {
+                throw $e;
+            }
+
             throw new RuntimeException('Package is not a valid tar.gz archive');
+        }
+    }
+
+    private function scanTarGzArchive(string $path): void
+    {
+        $handle = gzopen($path, 'rb');
+
+        if ($handle === false) {
+            throw new RuntimeException('Package is not a valid tar.gz archive');
+        }
+
+        $seen = [];
+        $entryCount = 0;
+        $totalBytes = 0;
+
+        try {
+            while (!gzeof($handle)) {
+                $header = gzread($handle, 512);
+
+                if ($header === false || $header === '') {
+                    break;
+                }
+
+                if (strlen($header) < 512) {
+                    throw new RuntimeException('Package tar header is truncated');
+                }
+
+                if (trim($header, "\0") === '') {
+                    break;
+                }
+
+                $name = rtrim(substr($header, 0, 100), "\0");
+                $prefix = rtrim(substr($header, 345, 155), "\0");
+                $pathName = $prefix === '' ? $name : $prefix . '/' . $name;
+                $type = $header[156] ?? "\0";
+                $sizeText = trim(rtrim(substr($header, 124, 12), "\0"));
+                $size = $sizeText === '' ? 0 : octdec($sizeText);
+
+                if (str_starts_with($pathName, './')) {
+                    $pathName = substr($pathName, 2);
+                }
+
+                if ($type === '5') {
+                    $pathName = rtrim($pathName, '/');
+                }
+
+                if ($pathName === '') {
+                    throw new RuntimeException('Unsafe package path: ');
+                }
+
+                $this->assertSafeArchivePath($pathName);
+
+                if (!in_array($type, ["\0", '0', '5'], true)) {
+                    throw new RuntimeException('Only regular files are allowed in package');
+                }
+
+                if (array_key_exists($pathName, $seen)) {
+                    throw new RuntimeException('Duplicate package path is not allowed: ' . $pathName);
+                }
+
+                $seen[$pathName] = true;
+                $entryCount++;
+
+                if ($entryCount > self::MAX_ENTRIES) {
+                    throw new RuntimeException('Package contains too many entries');
+                }
+
+                if ($type !== '5') {
+                    if ($size > self::MAX_FILE_BYTES) {
+                        throw new RuntimeException('Package file is too large: ' . $pathName);
+                    }
+
+                    $totalBytes += $size;
+                    if ($totalBytes > self::MAX_TOTAL_UNPACKED_BYTES) {
+                        throw new RuntimeException('Package unpacked content is too large');
+                    }
+                }
+
+                $padding = (512 - ($size % 512)) % 512;
+                $toSkip = $size + $padding;
+
+                while ($toSkip > 0) {
+                    $chunk = gzread($handle, min(8192, $toSkip));
+                    if ($chunk === false || $chunk === '') {
+                        throw new RuntimeException('Package tar entry is truncated');
+                    }
+
+                    $toSkip -= strlen($chunk);
+                }
+            }
+        } finally {
+            gzclose($handle);
         }
     }
 
     private function listFiles(PharData $phar): array
     {
         $files = [];
+        $entryCount = 0;
+        $totalBytes = 0;
 
         $iterator = new RecursiveIteratorIterator($phar);
 
@@ -183,7 +312,17 @@ class PackageInspectService
                 throw new RuntimeException('Links are not allowed in package');
             }
 
+            if (array_key_exists($path, $files)) {
+                throw new RuntimeException('Duplicate package path is not allowed: ' . $path);
+            }
+
+            $entryCount++;
+            if ($entryCount > self::MAX_ENTRIES) {
+                throw new RuntimeException('Package contains too many entries');
+            }
+
             if ($item->isDir()) {
+                $files[$path] = null;
                 continue;
             }
 
@@ -191,14 +330,38 @@ class PackageInspectService
                 throw new RuntimeException('Only regular files are allowed in package');
             }
 
+            $fileSize = $item->getSize();
+            if ($fileSize > self::MAX_FILE_BYTES) {
+                throw new RuntimeException('Package file is too large: ' . $path);
+            }
+
+            $totalBytes += max(0, $fileSize);
+            if ($totalBytes > self::MAX_TOTAL_UNPACKED_BYTES) {
+                throw new RuntimeException('Package unpacked content is too large');
+            }
+
             $content = file_get_contents($item->getPathname());
             if ($content === false) {
                 throw new RuntimeException('Failed to read package file: ' . $path);
             }
 
+            $actualSize = strlen($content);
+
+            if ($actualSize > self::MAX_FILE_BYTES) {
+                throw new RuntimeException('Package file is too large: ' . $path);
+            }
+
+            if ($actualSize > $fileSize) {
+                $totalBytes += $actualSize - max(0, $fileSize);
+                if ($totalBytes > self::MAX_TOTAL_UNPACKED_BYTES) {
+                    throw new RuntimeException('Package unpacked content is too large');
+                }
+            }
+
             $files[$path] = $content;
         }
 
+        $files = array_filter($files, static fn ($content): bool => $content !== null);
         ksort($files);
 
         return $files;

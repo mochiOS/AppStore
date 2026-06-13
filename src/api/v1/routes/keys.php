@@ -1,6 +1,37 @@
 <?php
 
 return function (ApiContext $ctx): bool {
+    if (preg_match('#^/keys/([^/]+)$#', $ctx->path, $matches) === 1) {
+        if ($ctx->method !== 'GET') {
+            ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
+            return true;
+        }
+
+        $keyId = rawurldecode($matches[1]);
+
+        if (!preg_match('/^[A-Za-z0-9._:-]+$/', $keyId)) {
+            ApiResponse::error('VALIDATION_ERROR', 'key_id is invalid', 422);
+            return true;
+        }
+
+        $key = $ctx->publicKeyRepo->findByKeyId($keyId);
+
+        if ($key === null) {
+            ApiResponse::error('KEY_NOT_FOUND', 'Key not found', 404);
+            return true;
+        }
+
+        ApiResponse::json([
+            'key' => [
+                'key_id' => $key['key_id'],
+                'public_key' => $key['public_key'],
+                'revoked_at' => $key['revoked_at'],
+            ],
+        ]);
+
+        return true;
+    }
+
     if ($ctx->path === '/keys') {
         $developerId = requireDeveloperId();
 
@@ -69,7 +100,9 @@ return function (ApiContext $ctx): bool {
         }
 
         $developerId = requireDeveloperId();
-        $key = $ctx->publicKeyRepo->revokeForDeveloper($matches[1], $developerId);
+        $keyId = rawurldecode($matches[1]);
+
+        $key = $ctx->publicKeyRepo->revokeForDeveloper($keyId, $developerId);
 
         if ($key === null) {
             ApiResponse::error('KEY_NOT_FOUND', 'Key not found', 404);

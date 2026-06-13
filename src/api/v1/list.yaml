@@ -401,11 +401,9 @@ paths:
                 display_name:
                   type: string
                   minLength: 1
-                  example: Binder
                 description:
                   type: string
                   nullable: true
-                  example: Finder-like file manager for mochiOS.
       responses:
         "201":
           description: App created.
@@ -659,7 +657,6 @@ paths:
                 key_id:
                   type: string
                   pattern: "^[A-Za-z0-9._:-]+$"
-                  example: exampleSignature
                 public_key:
                   type: string
                   minLength: 1
@@ -677,6 +674,36 @@ paths:
                     $ref: "#/components/schemas/PublicKey"
         "409":
           description: Public key already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          $ref: "#/components/responses/ValidationError"
+
+  /keys/{public_key}:
+    get:
+      tags: [ Public Keys ]
+      summary: Get public key
+      description: Get a registered public key for package verification.
+      security: [ ]
+      parameters:
+        - $ref: "#/components/parameters/PublicKeyPath"
+      responses:
+        "200":
+          description: Public key.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - key
+                additionalProperties: false
+                properties:
+                  key:
+                    $ref: "#/components/schemas/PublicKeyVerification"
+        "404":
+          description: Key was not found.
           content:
             application/json:
               schema:
@@ -755,7 +782,6 @@ paths:
                 app_name:
                   type: string
                   minLength: 1
-                  example: Binder
       responses:
         "201":
           description: Bundle ID reserved.
@@ -813,13 +839,11 @@ paths:
                 name:
                   type: string
                   minLength: 1
-                  example: mochiOS Core
                 slug:
                   type: string
                   minLength: 2
                   maxLength: 48
                   pattern: "^[a-z0-9-]+$"
-                  example: mochios-core
       responses:
         "201":
           description: Team created.
@@ -1550,6 +1574,15 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/DeveloperId"
+    PublicKeyPath:
+      name: public_key
+      in: path
+      required: true
+      description: Base64url-encoded 32-byte Ed25519 public key without padding.
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{43}$"
+      example: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     TeamId:
       name: team_id
       in: path
@@ -1641,7 +1674,6 @@ components:
     DeveloperId:
       type: string
       pattern: "^dev_[0-9a-f]{32}$"
-      example: dev_0123456789abcdef0123456789abcdef
 
     DeveloperIdNullable:
       oneOf:
@@ -1651,21 +1683,17 @@ components:
     TeamId:
       type: string
       pattern: "^team_[0-9a-f]{32}$"
-      example: team_0123456789abcdef0123456789abcdef
 
     ReleaseId:
       type: string
-      example: rel_0123456789abcdef0123456789abcdef
 
     BundleId:
       type: string
       pattern: "^[a-z0-9.-]+\\.[a-z0-9.-]+$"
-      example: com.mochi.binder
 
     DateTimeString:
       type: string
       format: date-time
-      example: "2026-06-08T08:00:00Z"
 
     TeamRole:
       type: string
@@ -1689,19 +1717,15 @@ components:
           $ref: "#/components/schemas/DeveloperId"
         provider:
           type: string
-          example: github
         provider_username:
           type: string
           nullable: true
-          example: tas0dev
         github_login:
           type: string
           nullable: true
-          example: tas0dev
         github_username:
           type: string
           nullable: true
-          example: tas0dev
         username:
           type: string
           nullable: true
@@ -1740,13 +1764,10 @@ components:
           $ref: "#/components/schemas/BundleId"
         app_name:
           type: string
-          example: Binder
         display_name:
           type: string
-          example: Binder
         name:
           type: string
-          example: Binder
         description:
           type: string
           nullable: true
@@ -1770,7 +1791,6 @@ components:
         latest_version:
           type: string
           nullable: true
-          example: "0.1.0"
         icon_url:
           type: string
           format: uri
@@ -1795,10 +1815,8 @@ components:
           $ref: "#/components/schemas/BundleId"
         display_name:
           type: string
-          example: Binder
         app_name:
           type: string
-          example: Binder
         description:
           type: string
           nullable: true
@@ -1815,7 +1833,6 @@ components:
         latest_version:
           type: string
           nullable: true
-          example: "0.1.0"
         status:
           type: string
           nullable: true
@@ -1834,10 +1851,8 @@ components:
           $ref: "#/components/schemas/DeveloperId"
         app_name:
           type: string
-          example: Binder
         status:
           type: string
-          example: reserved
         created_at:
           $ref: "#/components/schemas/DateTimeString"
         updated_at:
@@ -1849,7 +1864,6 @@ components:
       properties:
         key_id:
           type: string
-          example: exampleSignature
         id:
           type: string
           nullable: true
@@ -1867,6 +1881,26 @@ components:
             - $ref: "#/components/schemas/DateTimeString"
             - type: "null"
 
+    PublicKeyVerification:
+      type: object
+      required:
+        - public_key
+        - fingerprint
+        - revoked_at
+      additionalProperties: false
+      properties:
+        public_key:
+          type: string
+          description: Base64-encoded 32-byte Ed25519 public key.
+        fingerprint:
+          type: string
+          description: SHA-256 fingerprint of the raw 32-byte Ed25519 public key.
+          pattern: "^[a-f0-9]{64}$"
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+
     Release:
       type: object
       additionalProperties: true
@@ -1880,7 +1914,6 @@ components:
           nullable: true
         version:
           type: string
-          example: "0.1.0"
         status:
           $ref: "#/components/schemas/ReleaseStatus"
         manifest_hash:
@@ -1978,10 +2011,8 @@ components:
           $ref: "#/components/schemas/TeamId"
         name:
           type: string
-          example: mochiOS Core
         slug:
           type: string
-          example: mochios-core
         developer_id:
           $ref: "#/components/schemas/DeveloperId"
         role:
@@ -2002,7 +2033,6 @@ components:
         provider_username:
           type: string
           nullable: true
-          example: tas0dev
         role:
           $ref: "#/components/schemas/TeamRole"
         joined_at:
@@ -2037,7 +2067,6 @@ components:
       properties:
         csr_id:
           type: string
-          example: csr_0123456789abcdef0123456789abcdef
         developer_id:
           $ref: "#/components/schemas/DeveloperId"
         csr_pem:
@@ -2059,7 +2088,6 @@ components:
       properties:
         certificate_id:
           type: string
-          example: cert_0123456789abcdef0123456789abcdef
         csr_id:
           type: string
           nullable: true

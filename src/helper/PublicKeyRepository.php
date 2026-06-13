@@ -23,6 +23,32 @@ class PublicKeyRepository
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
+    public function findByPublicKey(string $publicKey): ?array
+    {
+        $decodedPublicKey = self::decodeEd25519PublicKey($publicKey);
+
+        if ($decodedPublicKey === null) {
+            return null;
+        }
+
+        $fingerprint = hash('sha256', $decodedPublicKey);
+
+        $stmt = $this->db->prepare(
+            'SELECT key_id, developer_id, public_key, fingerprint, created_at, revoked_at
+         FROM public_keys
+         WHERE fingerprint = :fingerprint
+         LIMIT 1'
+        );
+
+        $stmt->execute([
+            ':fingerprint' => $fingerprint,
+        ]);
+
+        $key = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $key === false ? null : $key;
+    }
+
     public function findByKeyId(string $keyId): ?array
     {
         $stmt = $this->db->prepare(

@@ -1,20 +1,21 @@
 <?php
 
 return function (ApiContext $ctx): bool {
-    if (preg_match('#^/keys/([^/]+)$#', $ctx->path, $matches) === 1) {
+    if (preg_match('#^/keys/([A-Za-z0-9_-]{43})$#', $ctx->path, $matches) === 1) {
         if ($ctx->method !== 'GET') {
             ApiResponse::error('METHOD_NOT_ALLOWED', 'Method not allowed', 405);
             return true;
         }
 
-        $keyId = rawurldecode($matches[1]);
+        $publicKey = strtr($matches[1], '-_', '+/');
+        $publicKey .= str_repeat('=', (4 - strlen($publicKey) % 4) % 4);
 
-        if (!preg_match('/^[A-Za-z0-9._:-]+$/', $keyId)) {
-            ApiResponse::error('VALIDATION_ERROR', 'key_id is invalid', 422);
+        if (!PublicKeyRepository::isValidEd25519PublicKey($publicKey)) {
+            ApiResponse::error('VALIDATION_ERROR', 'public_key is invalid', 422);
             return true;
         }
 
-        $key = $ctx->publicKeyRepo->findByKeyId($keyId);
+        $key = $ctx->publicKeyRepo->findByPublicKey($publicKey);
 
         if ($key === null) {
             ApiResponse::error('KEY_NOT_FOUND', 'Key not found', 404);
@@ -23,8 +24,8 @@ return function (ApiContext $ctx): bool {
 
         ApiResponse::json([
             'key' => [
-                'key_id' => $key['key_id'],
                 'public_key' => $key['public_key'],
+                'fingerprint' => $key['fingerprint'],
                 'revoked_at' => $key['revoked_at'],
             ],
         ]);

@@ -35,7 +35,6 @@ class AppConfig
         $envOverrides = [
             'APPSTORE_FRONTEND_URL' => 'frontend_url',
             'APPSTORE_API_URL' => 'api_url',
-            'APPSTORE_MSIGN_PATH' => 'msign_path',
             'APPSTORE_MSIGN_TIMEOUT_SECONDS' => 'msign_timeout_seconds',
             'APPSTORE_MSIGN_MAX_OUTPUT_BYTES' => 'msign_max_output_bytes',
             'APPSTORE_SESSION_COOKIE_NAME' => 'session_cookie_name',

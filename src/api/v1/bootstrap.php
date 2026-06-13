@@ -87,7 +87,7 @@ return new ApiContext(
     storage: new PackageStorage(ROOT),
     adminRepo: new AdminRepository($db),
     packageSignatureVerifier: new PackageSignatureVerifier(
-        (string) ($appConfig['msign_path'] ?? '/usr/local/bin/msign'),
+        'msign',
         (int) ($appConfig['msign_timeout_seconds'] ?? 10),
         (int) ($appConfig['msign_max_output_bytes'] ?? 65536),
     ),

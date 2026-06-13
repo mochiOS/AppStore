@@ -8,7 +8,6 @@ return [
     'ca_key_path' => '',
     'ca_key_passphrase' => '',
     'ca_certificate_days' => 365,
-    'msign_path' => '/usr/local/bin/msign',
     'msign_timeout_seconds' => 10,
     'msign_max_output_bytes' => 65536,
     'session_cookie_name' => 'mochios_appstore_session',

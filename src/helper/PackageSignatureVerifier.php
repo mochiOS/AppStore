@@ -3,7 +3,7 @@
 class PackageSignatureVerifier
 {
     public function __construct(
-        private readonly string $msignPath = '/usr/local/bin/msign',
+        private readonly string $msignPath = 'msign',
         private readonly int $timeoutSeconds = 10,
         private readonly int $maxOutputBytes = 65536
     ) {

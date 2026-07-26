@@ -2,12 +2,6 @@
 
 return [
     'env' => 'local',
-    'oauth_subject_salt' => '',
-    'admin_api_token' => '',
-    'ca_cert_path' => '',
-    'ca_key_path' => '',
-    'ca_key_passphrase' => '',
-    'ca_certificate_days' => 365,
     'msign_timeout_seconds' => 10,
     'msign_max_output_bytes' => 65536,
     'session_cookie_name' => 'mochios_appstore_session',

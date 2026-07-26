@@ -157,12 +157,8 @@ class TeamRepository
                 tm.team_id,
                 tm.developer_id,
                 tm.role,
-                tm.joined_at,
-                ol.provider,
-                ol.provider_username
+                tm.joined_at
              FROM team_members tm
-             LEFT JOIN oauth_links ol
-                ON ol.developer_id = tm.developer_id
              WHERE tm.team_id = :team_id
              ORDER BY
                 CASE tm.role

@@ -14,9 +14,9 @@ Usage:
   make admin del <developer_id>
 
 Examples:
-  make admin add dev_42eef70aab14998507c70bc00b510d51
-  make admin add dev_42eef70aab14998507c70bc00b510d51 owner
-  make admin del dev_42eef70aab14998507c70bc00b510d51
+  make admin add 019b9b17-6f1e-7d18-8a62-9306c63e41a2
+  make admin add 019b9b17-6f1e-7d18-8a62-9306c63e41a2 owner
+  make admin del 019b9b17-6f1e-7d18-8a62-9306c63e41a2
 
 Roles:
   admin
@@ -36,7 +36,7 @@ function requireDeveloperId(?string $value): string
         usage();
     }
 
-    if (!preg_match('/^dev_[0-9a-f]{32}$/', $developerId)) {
+    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i', $developerId)) {
         fwrite(STDERR, "error: developer_id is invalid\n");
         exit(1);
     }

@@ -7,9 +7,8 @@ window.APP_CONFIG = {
 
 let csrfToken = null;
 
-function login(provider = "github") {
-    location.href =
-        `${window.APP_CONFIG.API_URL}/v1/oauth?provider=${encodeURIComponent(provider)}`;
+function login() {
+    window.alert("AccountsとAppStore管理画面の認証統合は準備中です。");
 }
 
 function isStateChangingMethod(method) {
@@ -89,71 +88,7 @@ async function showMe() {
 }
 
 async function showDeveloper() {
-    const result = await apiFetch("/v1/developers/me");
-
-    if (!result.ok) {
-        return null;
-    }
-
-    return result.data;
-}
-
-function getDeveloperRecord(developerResponse) {
-    if (!developerResponse) {
-        return null;
-    }
-
-    if (developerResponse.developer) {
-        return developerResponse.developer;
-    }
-
-    return developerResponse;
-}
-
-function getDeveloperUsername(auth, developerResponse) {
-    const developer = getDeveloperRecord(developerResponse);
-
-    return (
-        developer?.github_login ||
-        developer?.github_username ||
-        developer?.provider_username ||
-        developer?.username ||
-        developer?.oauth?.provider_username ||
-        developer?.oauth?.github_username ||
-        auth?.user?.username ||
-        null
-    );
-}
-
-function githubAvatarUrl(username, size = 56) {
-    if (!username) {
-        return null;
-    }
-
-    return `https://github.com/${encodeURIComponent(username)}.png?size=${encodeURIComponent(size)}`;
-}
-
-function renderGitHubAvatar(element, username, size = 56) {
-    if (!element || !username) {
-        return;
-    }
-
-    const avatarUrl = githubAvatarUrl(username, size);
-
-    if (!avatarUrl) {
-        return;
-    }
-
-    const img = document.createElement("img");
-    img.src = avatarUrl;
-    img.alt = username;
-    img.width = size;
-    img.height = size;
-    img.loading = "lazy";
-    img.referrerPolicy = "no-referrer";
-
-    element.innerHTML = "";
-    element.appendChild(img);
+    return null;
 }
 
 async function listKeys() {

@@ -16,10 +16,9 @@
     <div class="login-box">
         <img src="resources/mochimochi-kun.svg" width="100" height="100" alt="mochiOS logo">
         <div class="login-title">Developer Console</div>
-        <div class="login-sub">mochiOSのアプリ開発を始めるには<br>サインインしてください。</div>
-        <button class="btn-github" onclick="login('github')">
-            <img src="resources/GithubIcon.svg" alt="GitHub logo" width="24" height="24">
-            GitHubでサインイン
+        <div class="login-sub">Accountsとの認証統合は準備中です。</div>
+        <button class="btn-login" onclick="login()">
+            統合状況を確認
         </button>
         <div class="login-sub"><a href="https://policy.mochios.org/terms/" target="_blank" rel="noopener noreferrer">利用規約</a> | <a href="https://policy.mochios.org/privacy/" target="_blank" rel="noopener noreferrer">プライバシーポリシー</a></div>
     </div>
@@ -33,7 +32,6 @@
 
     <div class="nav-right">
         <div class="nav-user" id="navUser" style="display:none">
-            <div class="nav-avatar" id="navAvatar"></div>
             <span class="nav-username" id="navUsername"></span>
             <span class="adminSection" style="display:none">(Admin)</span>
         </div>
@@ -93,16 +91,8 @@
                         <div class="info-cell-value" id="pd-devId">—</div>
                     </div>
                     <div class="info-cell">
-                        <div class="info-cell-label">GitHub</div>
-                        <div class="info-cell-value" id="pd-github">—</div>
-                    </div>
-                    <div class="info-cell">
-                        <div class="info-cell-label">登録日</div>
-                        <div class="info-cell-value" id="pd-created">—</div>
-                    </div>
-                    <div class="info-cell">
-                        <div class="info-cell-label">ステータス</div>
-                        <div class="info-cell-value" id="pd-status">—</div>
+                        <div class="info-cell-label">認証基盤</div>
+                        <div class="info-cell-value">Accounts（統合準備中）</div>
                     </div>
                 </div>
             </div>
@@ -357,7 +347,7 @@
                 <div class="field-row">
                     <div class="field">
                         <div class="field-label">Developer ID</div>
-                        <label for="teamMemberDeveloperIdInput"></label><input id="teamMemberDeveloperIdInput" type="text" placeholder="dev_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                        <label for="teamMemberDeveloperIdInput"></label><input id="teamMemberDeveloperIdInput" type="text" placeholder="Developer ID (UUIDv7)">
                     </div>
                     <div class="field">
                         <div class="field-label">Role</div>

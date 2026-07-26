@@ -1,2118 +1,348 @@
 openapi: 3.1.0
 info:
   title: mochiOS AppStore API
-  version: v1
+  version: 1.0.0
   description: |
-    mochiOS API
-
+    アプリ登録、Package upload、Release審査、公開カタログを扱うAPIです。
+    OAuth、Developer管理、Developer審査、Certificate発行・失効APIは
+    AccountsおよびDeveloperCAへ移管済みです。
 servers:
-  - url: https://api.mochios.org/v1
-    description: Production
-
+  - url: /v1
 tags:
-  - name: Public Store
-  - name: OAuth
-  - name: Auth
+  - name: 公開カタログ
+  - name: 暫定セッション
+  - name: 公開鍵（暫定）
+  - name: Bundle ID
   - name: Developer Apps
   - name: Developer Releases
-  - name: Public Keys
-  - name: Bundle IDs
   - name: Teams
-  - name: Certificates
-  - name: Admin Releases
-  - name: Admin Certificates
-
-security:
-  - sessionCookie: []
-
+  - name: Release管理
 paths:
+  /auth/csrf:
+    get:
+      tags: [暫定セッション]
+      summary: AppStore管理画面用のCSRF tokenを取得する
+      responses:
+        "200": { description: CSRF token }
+  /auth/me:
+    get:
+      tags: [暫定セッション]
+      summary: 暫定AppStore sessionのDeveloper IDを取得する
+      responses:
+        "200": { description: Developer IDとCSRF token }
+        "401": { description: 暫定sessionが存在しない }
+  /auth/logout:
+    post:
+      tags: [暫定セッション]
+      summary: 暫定AppStore sessionを終了する
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      responses:
+        "200": { description: ログアウト完了 }
   /apps:
     get:
-      tags: [Public Store]
-      summary: List public apps
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Offset"
+      tags: [公開カタログ]
+      summary: 公開アプリ一覧を取得する
       responses:
-        "200":
-          description: Public app list.
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - type: array
-                    items:
-                      $ref: "#/components/schemas/PublicApp"
-                  - type: object
-                    additionalProperties: true
-                    properties:
-                      apps:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/PublicApp"
-                      items:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/PublicApp"
-
+        "200": { description: アプリ一覧 }
   /apps/{bundle_id}:
     get:
-      tags: [Public Store]
-      summary: Get public app detail
-      security: []
+      tags: [公開カタログ]
+      summary: 公開アプリ詳細を取得する
       parameters:
         - $ref: "#/components/parameters/BundleId"
       responses:
-        "200":
-          description: Public app detail.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PublicApp"
-        "404":
-          $ref: "#/components/responses/AppNotFound"
-
+        "200": { description: アプリ詳細 }
+        "404": { description: アプリが存在しない }
   /apps/{bundle_id}/releases:
     get:
-      tags: [Public Store]
-      summary: List public releases for an app
-      security: []
+      tags: [公開カタログ]
+      summary: 公開Release一覧を取得する
       parameters:
         - $ref: "#/components/parameters/BundleId"
       responses:
-        "200":
-          description: Release list.
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - type: array
-                    items:
-                      $ref: "#/components/schemas/Release"
-                  - type: object
-                    additionalProperties: true
-                    properties:
-                      releases:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/Release"
-        "404":
-          $ref: "#/components/responses/AppNotFound"
-
+        "200": { description: Release一覧 }
   /apps/{bundle_id}/releases/{version}:
     get:
-      tags: [Public Store]
-      summary: Get a public release by version
-      security: []
+      tags: [公開カタログ]
+      summary: Release詳細を取得する
       parameters:
         - $ref: "#/components/parameters/BundleId"
         - name: version
           in: path
           required: true
-          schema:
-            type: string
-          example: "0.1.0"
+          schema: { type: string }
       responses:
-        "200":
-          description: Release detail.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Release"
-        "404":
-          description: App or release was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+        "200": { description: Release詳細 }
+        "404": { description: Releaseが存在しない }
   /apps/{bundle_id}/download:
     get:
-      tags: [Public Store]
-      summary: Download app package
-      security: []
+      tags: [公開カタログ]
+      summary: 公開Packageをダウンロードする
       parameters:
         - $ref: "#/components/parameters/BundleId"
         - name: version
           in: query
           required: false
-          description: Release version. If omitted, the server selects the downloadable release.
-          schema:
-            type: string
-          example: "0.1.0"
+          schema: { type: string }
       responses:
-        "200":
-          description: Package file.
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-            application/gzip:
-              schema:
-                type: string
-                format: binary
-        "404":
-          description: App or release was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Package file is missing on the server.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+        "200": { description: Package本体 }
+        "404": { description: Packageが存在しない }
   /search:
     get:
-      tags: [Public Store]
-      summary: Search public apps
-      security: []
+      tags: [公開カタログ]
+      summary: 公開アプリを検索する
       parameters:
         - name: q
           in: query
-          required: false
-          schema:
-            type: string
-          example: "binder"
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Offset"
-      responses:
-        "200":
-          description: Search results.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [query, results]
-                additionalProperties: true
-                properties:
-                  query:
-                    type: string
-                  results:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/PublicApp"
-
-  /oauth:
-    get:
-      tags: [OAuth]
-      summary: Start OAuth login
-      security: []
-      parameters:
-        - name: provider
-          in: query
-          required: false
-          schema:
-            type: string
-            default: github
-          example: github
-      responses:
-        "302":
-          description: Redirects to the OAuth provider authorization URL.
-          headers:
-            Location:
-              schema:
-                type: string
-                format: uri
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
-        "500":
-          description: OAuth provider is not configured or state creation failed.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /oauth/callback:
-    get:
-      tags: [OAuth]
-      summary: OAuth callback
-      security: []
-      parameters:
-        - name: code
-          in: query
           required: true
-          schema:
-            type: string
-        - name: state
-          in: query
-          required: true
-          schema:
-            type: string
+          schema: { type: string }
       responses:
-        "302":
-          description: Redirects to frontend after successful login.
-          headers:
-            Location:
-              schema:
-                type: string
-                format: uri
-        "400":
-          description: Invalid OAuth callback or state.
-          content:
-            text/plain:
-              schema:
-                type: string
-        "401":
-          description: OAuth code is invalid, already used, or no access token was returned.
-          content:
-            text/plain:
-              schema:
-                type: string
-        "502":
-          description: Failed to get OAuth user.
-          content:
-            text/plain:
-              schema:
-                type: string
-
-  /auth/me:
-    get:
-      tags: [Auth]
-      summary: Get current authenticated session
-      responses:
-        "200":
-          description: Current session.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [authenticated]
-                additionalProperties: true
-                properties:
-                  authenticated:
-                    type: boolean
-                    const: true
-                  developer_id:
-                    $ref: "#/components/schemas/DeveloperIdNullable"
-                  user:
-                    oneOf:
-                      - $ref: "#/components/schemas/OAuthUser"
-                      - type: "null"
-                  csrf_token:
-                    type: string
-                    description: CSRF token to send as X-CSRF-Token on state-changing requests.
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /auth/csrf:
-    get:
-      tags: [Auth]
-      summary: Get CSRF token for state-changing requests
-      security: []
-      responses:
-        "200":
-          description: CSRF token for this session.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [csrf_token]
-                additionalProperties: false
-                properties:
-                  csrf_token:
-                    type: string
-                    description: Send this value as X-CSRF-Token on POST, PUT, PATCH, and DELETE requests.
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
-
-  /developers/me:
-    get:
-      tags: [Auth]
-      summary: Get current developer profile
-      responses:
-        "200":
-          description: Developer profile.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [developer]
-                additionalProperties: true
-                properties:
-                  developer:
-                    $ref: "#/components/schemas/Developer"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-
-  /auth/logout:
-    post:
-      tags: [Auth]
-      summary: Logout current session
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      responses:
-        "200":
-          description: Logged out.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ok]
-                properties:
-                  ok:
-                    type: boolean
-                    const: true
-        "405":
-          $ref: "#/components/responses/MethodNotAllowed"
-
-  /developer/apps:
-    get:
-      tags: [Developer Apps]
-      summary: List developer-owned apps
-      responses:
-        "200":
-          description: Developer app list.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [apps]
-                additionalProperties: true
-                properties:
-                  apps:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/DeveloperApp"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-    post:
-      tags: [Developer Apps]
-      summary: Create developer app from reserved Bundle ID
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [bundle_id, display_name]
-              additionalProperties: false
-              properties:
-                bundle_id:
-                  $ref: "#/components/schemas/BundleId"
-                display_name:
-                  type: string
-                  minLength: 1
-                description:
-                  type: string
-                  nullable: true
-      responses:
-        "201":
-          description: App created.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [app]
-                additionalProperties: true
-                properties:
-                  app:
-                    $ref: "#/components/schemas/DeveloperApp"
-        "404":
-          description: Bundle ID was not reserved by this developer.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: App already exists.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
-  /developer/apps/{bundle_id}:
-    get:
-      tags: [Developer Apps]
-      summary: Get developer-owned app
-      parameters:
-        - $ref: "#/components/parameters/BundleId"
-      responses:
-        "200":
-          description: Developer app detail.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [app]
-                additionalProperties: true
-                properties:
-                  app:
-                    $ref: "#/components/schemas/DeveloperApp"
-        "404":
-          $ref: "#/components/responses/AppNotFound"
-
-  /developer/apps/{bundle_id}/team:
-    post:
-      tags: [Developer Apps, Teams]
-      summary: Assign app to a team or return it to personal ownership
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/BundleId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [team_id]
-              additionalProperties: false
-              properties:
-                team_id:
-                  oneOf:
-                    - $ref: "#/components/schemas/TeamId"
-                    - type: "null"
-      responses:
-        "200":
-          description: App team assignment updated.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [app]
-                additionalProperties: true
-                properties:
-                  app:
-                    $ref: "#/components/schemas/DeveloperApp"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          description: App or team not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
-  /developer/apps/{bundle_id}/releases:
-    get:
-      tags: [Developer Releases]
-      summary: List developer releases for an app
-      parameters:
-        - $ref: "#/components/parameters/BundleId"
-      responses:
-        "200":
-          description: Developer release list.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [bundle_id, releases]
-                additionalProperties: true
-                properties:
-                  bundle_id:
-                    $ref: "#/components/schemas/BundleId"
-                  releases:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Release"
-        "404":
-          $ref: "#/components/responses/AppNotFound"
-    post:
-      tags: [Developer Releases]
-      summary: Upload signed package and create draft release
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/BundleId"
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [package]
-              properties:
-                package:
-                  type: string
-                  format: binary
-                  description: Signed .pkg package.
-                changelog:
-                  type: string
-                  nullable: true
-      responses:
-        "201":
-          description: Draft release created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReleaseUploadResponse"
-        "403":
-          description: Bundle ID not owned or public key not registered.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: Release version already exists.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          description: Package, signature, bundle ID, or validation error.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /developer/releases/{release_id}:
-    get:
-      tags: [Developer Releases]
-      summary: Get developer-owned release
-      parameters:
-        - $ref: "#/components/parameters/ReleaseId"
-      responses:
-        "200":
-          description: Developer release detail.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [release]
-                additionalProperties: true
-                properties:
-                  release:
-                    $ref: "#/components/schemas/Release"
-        "404":
-          $ref: "#/components/responses/ReleaseNotFound"
-
-  /developer/releases/{release_id}/submit:
-    post:
-      tags: [Developer Releases]
-      summary: Submit draft or rejected release for review
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/ReleaseId"
-      responses:
-        "200":
-          description: Release submitted.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [release]
-                additionalProperties: true
-                properties:
-                  release:
-                    $ref: "#/components/schemas/Release"
-        "404":
-          $ref: "#/components/responses/ReleaseNotFound"
-        "409":
-          description: Only draft or rejected releases can be submitted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+        "200": { description: 検索結果 }
   /keys:
     get:
-      tags: [Public Keys]
-      summary: List developer public keys
+      tags: [公開鍵（暫定）]
+      summary: 現在のDeveloperの公開鍵を取得する
+      security: [{ sessionCookie: [] }]
       responses:
-        "200":
-          description: Public keys.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [keys]
-                additionalProperties: true
-                properties:
-                  keys:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/PublicKey"
+        "200": { description: 公開鍵一覧 }
     post:
-      tags: [Public Keys]
-      summary: Register public key
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [key_id, public_key]
-              additionalProperties: false
-              properties:
-                key_id:
-                  type: string
-                  pattern: "^[A-Za-z0-9._:-]+$"
-                public_key:
-                  type: string
-                  minLength: 1
+      tags: [公開鍵（暫定）]
+      summary: Package署名検証用の公開鍵を登録する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       responses:
-        "201":
-          description: Public key registered.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [key]
-                additionalProperties: true
-                properties:
-                  key:
-                    $ref: "#/components/schemas/PublicKey"
-        "409":
-          description: Public key already exists.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "201": { description: 登録済み公開鍵 }
   /keys/{public_key}:
     get:
-      tags: [ Public Keys ]
-      summary: Get public key
-      description: Get a registered public key for package verification.
-      security: [ ]
+      tags: [公開鍵（暫定）]
+      summary: Package署名検証用の公開鍵情報を取得する
       parameters:
-        - $ref: "#/components/parameters/PublicKeyPath"
+        - name: public_key
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
       responses:
-        "200":
-          description: Public key.
-          content:
-            application/json:
-              schema:
-                type: object
-                required:
-                  - key
-                additionalProperties: false
-                properties:
-                  key:
-                    $ref: "#/components/schemas/PublicKeyVerification"
-        "404":
-          description: Key was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "200": { description: 公開鍵情報 }
+        "404": { description: 公開鍵が存在しない }
   /keys/{key_id}/revoke:
     post:
-      tags: [Public Keys]
-      summary: Revoke public key
-      security:
-        - sessionCookie: []
-          csrfToken: []
+      tags: [公開鍵（暫定）]
+      summary: 公開鍵を失効させる
+      security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
         - name: key_id
           in: path
           required: true
-          schema:
-            type: string
-          example: exampleSignature
+          schema: { type: string }
       responses:
-        "200":
-          description: Public key revoked.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [key]
-                additionalProperties: true
-                properties:
-                  key:
-                    $ref: "#/components/schemas/PublicKey"
-        "404":
-          description: Key was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+        "200": { description: 失効済み公開鍵 }
   /bundle-ids:
     get:
-      tags: [Bundle IDs]
-      summary: List reserved Bundle IDs
+      tags: [Bundle ID]
+      summary: 所有Bundle ID一覧を取得する
+      security: [{ sessionCookie: [] }]
       responses:
-        "200":
-          description: Bundle ID list.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [bundle_ids]
-                additionalProperties: true
-                properties:
-                  bundle_ids:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/BundleIdRecord"
+        "200": { description: Bundle ID一覧 }
     post:
-      tags: [Bundle IDs]
-      summary: Reserve Bundle ID
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [bundle_id, app_name]
-              additionalProperties: false
-              properties:
-                bundle_id:
-                  $ref: "#/components/schemas/BundleId"
-                app_name:
-                  type: string
-                  minLength: 1
+      tags: [Bundle ID]
+      summary: Bundle IDを予約する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       responses:
-        "201":
-          description: Bundle ID reserved.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [bundle_id]
-                additionalProperties: true
-                properties:
-                  bundle_id:
-                    $ref: "#/components/schemas/BundleIdRecord"
-        "409":
-          description: Bundle ID already exists.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "201": { description: 予約済みBundle ID }
+  /developer/apps:
+    get:
+      tags: [Developer Apps]
+      summary: 所有アプリ一覧を取得する
+      security: [{ sessionCookie: [] }]
+      responses:
+        "200": { description: アプリ一覧 }
+    post:
+      tags: [Developer Apps]
+      summary: アプリを登録する
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      responses:
+        "201": { description: 登録済みアプリ }
+  /developer/apps/{bundle_id}:
+    get:
+      tags: [Developer Apps]
+      summary: 所有アプリ詳細を取得する
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/BundleId"
+      responses:
+        "200": { description: アプリ詳細 }
+        "404": { description: アプリが存在しない }
+  /developer/apps/{bundle_id}/team:
+    post:
+      tags: [Developer Apps]
+      summary: アプリを所有するAppStore内チームを設定する
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/BundleId"
+      responses:
+        "200": { description: 更新済みアプリ }
+  /developer/apps/{bundle_id}/releases:
+    get:
+      tags: [Developer Releases]
+      summary: 所有アプリのRelease一覧を取得する
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/BundleId"
+      responses:
+        "200": { description: Release一覧 }
+    post:
+      tags: [Developer Releases]
+      summary: `.pkg`をuploadしてdraft Releaseを作成する
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/BundleId"
+      responses:
+        "201": { description: 作成済みRelease }
+  /developer/releases/{release_id}/submit:
+    post:
+      tags: [Developer Releases]
+      summary: Releaseを審査へ提出する
+      security: [{ sessionCookie: [], csrfToken: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ReleaseId"
+      responses:
+        "200": { description: 提出済みRelease }
+  /developer/releases/{release_id}:
+    get:
+      tags: [Developer Releases]
+      summary: 所有Releaseの詳細を取得する
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ReleaseId"
+      responses:
+        "200": { description: Release詳細 }
+        "404": { description: Releaseが存在しない }
   /teams:
     get:
       tags: [Teams]
-      summary: List teams for current developer
+      summary: AppStore内チーム一覧を取得する
+      security: [{ sessionCookie: [] }]
       responses:
-        "200":
-          description: Team list.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [teams]
-                additionalProperties: true
-                properties:
-                  teams:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Team"
+        "200": { description: チーム一覧 }
     post:
       tags: [Teams]
-      summary: Create team
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [name]
-              additionalProperties: false
-              properties:
-                name:
-                  type: string
-                  minLength: 1
-                slug:
-                  type: string
-                  minLength: 2
-                  maxLength: 48
-                  pattern: "^[a-z0-9-]+$"
+      summary: AppStore内チームを作成する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       responses:
-        "201":
-          description: Team created.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [team]
-                additionalProperties: true
-                properties:
-                  team:
-                    $ref: "#/components/schemas/Team"
-        "409":
-          description: Team slug already exists.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "201": { description: 作成済みチーム }
   /teams/{team_id}:
     get:
       tags: [Teams]
-      summary: Get team detail
+      summary: AppStore内チームの詳細を取得する
+      security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/TeamId"
       responses:
-        "200":
-          description: Team detail.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [team]
-                additionalProperties: true
-                properties:
-                  team:
-                    $ref: "#/components/schemas/Team"
-        "404":
-          description: Team was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+        "200": { description: チーム詳細 }
+        "404": { description: チームが存在しない }
   /teams/{team_id}/members:
     get:
       tags: [Teams]
-      summary: List team members
+      summary: AppStore内チームのメンバー一覧を取得する
+      security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/TeamId"
       responses:
-        "200":
-          description: Team members.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [team_id, members]
-                additionalProperties: true
-                properties:
-                  team_id:
-                    $ref: "#/components/schemas/TeamId"
-                  members:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/TeamMember"
-        "404":
-          description: Team was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
+        "200": { description: メンバー一覧 }
     post:
       tags: [Teams]
-      summary: Add team member
-      security:
-        - sessionCookie: []
-          csrfToken: []
+      summary: AppStore内チームへメンバーを追加する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
         - $ref: "#/components/parameters/TeamId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [developer_id]
-              additionalProperties: false
-              properties:
-                developer_id:
-                  $ref: "#/components/schemas/DeveloperId"
-                role:
-                  $ref: "#/components/schemas/TeamRole"
       responses:
-        "201":
-          description: Member added.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [member]
-                additionalProperties: true
-                properties:
-                  member:
-                    $ref: "#/components/schemas/TeamMember"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          description: Team or developer was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "201": { description: 追加済みメンバー }
   /teams/{team_id}/members/{developer_id}/role:
     post:
       tags: [Teams]
-      summary: Update team member role
-      security:
-        - sessionCookie: []
-          csrfToken: []
+      summary: AppStore内チームのメンバー権限を変更する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
         - $ref: "#/components/parameters/TeamId"
         - $ref: "#/components/parameters/DeveloperId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [role]
-              additionalProperties: false
-              properties:
-                role:
-                  $ref: "#/components/schemas/TeamRole"
       responses:
-        "200":
-          description: Member role updated.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [member]
-                additionalProperties: true
-                properties:
-                  member:
-                    $ref: "#/components/schemas/TeamMember"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "404":
-          description: Member was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "409":
-          description: Team must keep at least one owner.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "200": { description: 更新済みメンバー }
   /teams/{team_id}/members/{developer_id}/remove:
     post:
       tags: [Teams]
-      summary: Remove team member
-      security:
-        - sessionCookie: []
-          csrfToken: []
+      summary: AppStore内チームからメンバーを削除する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
         - $ref: "#/components/parameters/TeamId"
         - $ref: "#/components/parameters/DeveloperId"
       responses:
-        "200":
-          description: Member removal result.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [deleted]
-                additionalProperties: true
-                properties:
-                  deleted:
-                    type: boolean
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "409":
-          description: Team must keep at least one owner.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /developer-verifications/me:
-    get:
-      tags: [Certificates]
-      summary: Get current developer verification status
-      responses:
-        "200":
-          description: Developer verification.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [verification]
-                additionalProperties: true
-                properties:
-                  verification:
-                    oneOf:
-                      - $ref: "#/components/schemas/DeveloperVerification"
-                      - type: "null"
-
-  /developer-verifications/request:
-    post:
-      tags: [Certificates]
-      summary: Request developer verification
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                note:
-                  type: string
-                  nullable: true
-      responses:
-        "201":
-          description: Verification requested.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [verification]
-                additionalProperties: true
-                properties:
-                  verification:
-                    $ref: "#/components/schemas/DeveloperVerification"
-
-  /certificate-requests:
-    get:
-      tags: [Certificates]
-      summary: List certificate signing requests
-      responses:
-        "200":
-          description: CSR list.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [certificate_requests]
-                additionalProperties: true
-                properties:
-                  certificate_requests:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/CertificateRequest"
-    post:
-      tags: [Certificates]
-      summary: Create certificate signing request
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [csr_pem]
-              additionalProperties: false
-              properties:
-                csr_pem:
-                  type: string
-                  minLength: 1
-      responses:
-        "201":
-          description: CSR created.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [certificate_request]
-                additionalProperties: true
-                properties:
-                  certificate_request:
-                    $ref: "#/components/schemas/CertificateRequest"
-        "403":
-          description: Developer verification is required.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
-  /certificates:
-    get:
-      tags: [Certificates]
-      summary: List developer certificates
-      responses:
-        "200":
-          description: Certificate list.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [certificates]
-                additionalProperties: true
-                properties:
-                  certificates:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Certificate"
-
-  /certificates/{certificate_id}:
-    get:
-      tags: [Certificates]
-      summary: Get developer certificate
-      parameters:
-        - $ref: "#/components/parameters/CertificateId"
-      responses:
-        "200":
-          description: Certificate detail.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [certificate]
-                additionalProperties: true
-                properties:
-                  certificate:
-                    $ref: "#/components/schemas/Certificate"
-        "404":
-          description: Certificate was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /ca/root:
-    get:
-      tags: [Certificates]
-      summary: Get root CA certificate
-      security: []
-      responses:
-        "200":
-          description: Root CA.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [ca]
-                additionalProperties: true
-                properties:
-                  ca:
-                    type: object
-                    required: [configured, fingerprint, certificate_pem]
-                    additionalProperties: true
-                    properties:
-                      configured:
-                        type: boolean
-                        const: true
-                      fingerprint:
-                        type: string
-                      certificate_pem:
-                        type: string
-        "503":
-          description: Certificate authority is not configured.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+        "200": { description: 削除完了 }
   /admin/releases:
     get:
-      tags: [Admin Releases]
-      summary: List releases for admin review
-      parameters:
-        - name: status
-          in: query
-          required: false
-          schema:
-            $ref: "#/components/schemas/ReleaseStatus"
-          example: submitted
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Offset"
+      tags: [Release管理]
+      summary: 審査対象Release一覧を取得する
+      security: [{ sessionCookie: [] }]
       responses:
-        "200":
-          description: Admin release list.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [admin, status, releases]
-                additionalProperties: true
-                properties:
-                  admin:
-                    $ref: "#/components/schemas/DeveloperId"
-                  status:
-                    $ref: "#/components/schemas/ReleaseStatus"
-                  releases:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Release"
-        "403":
-          $ref: "#/components/responses/Forbidden"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "200": { description: Release一覧 }
   /admin/releases/{release_id}/approve:
     post:
-      tags: [Admin Releases]
-      summary: Approve submitted release and publish it
-      security:
-        - sessionCookie: []
-          csrfToken: []
+      tags: [Release管理]
+      summary: Releaseを承認して公開する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
         - $ref: "#/components/parameters/ReleaseId"
       responses:
-        "200":
-          description: Release approved.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [release]
-                additionalProperties: true
-                properties:
-                  release:
-                    $ref: "#/components/schemas/Release"
-        "404":
-          $ref: "#/components/responses/ReleaseNotFound"
-        "409":
-          description: Only submitted releases can be approved.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+        "200": { description: 公開済みRelease }
   /admin/releases/{release_id}/reject:
     post:
-      tags: [Admin Releases]
-      summary: Reject submitted release
-      security:
-        - sessionCookie: []
-          csrfToken: []
+      tags: [Release管理]
+      summary: Releaseを却下する
+      security: [{ sessionCookie: [], csrfToken: [] }]
       parameters:
         - $ref: "#/components/parameters/ReleaseId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [message]
-              additionalProperties: false
-              properties:
-                message:
-                  type: string
-                  minLength: 1
       responses:
-        "200":
-          description: Release rejected.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [release]
-                additionalProperties: true
-                properties:
-                  release:
-                    $ref: "#/components/schemas/Release"
-        "404":
-          $ref: "#/components/responses/ReleaseNotFound"
-        "409":
-          description: Only submitted releases can be rejected.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "200": { description: 却下済みRelease }
   /admin/releases/{release_id}/download:
     get:
-      tags: [Admin Releases]
-      summary: Download release package for admin review
+      tags: [Release管理]
+      summary: 審査用Packageをダウンロードする
+      security: [{ sessionCookie: [] }]
       parameters:
         - $ref: "#/components/parameters/ReleaseId"
       responses:
-        "200":
-          description: Package file.
-          content:
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
-            application/gzip:
-              schema:
-                type: string
-                format: binary
-        "404":
-          description: Release or package was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /admin/developers/{developer_id}/verification:
-    post:
-      tags: [Admin Certificates]
-      summary: Update developer verification status
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/DeveloperId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [verification_status]
-              additionalProperties: false
-              properties:
-                verification_status:
-                  type: string
-                  enum: [verified, rejected]
-                note:
-                  type: string
-                  nullable: true
-      responses:
-        "200":
-          description: Verification updated.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [verification]
-                additionalProperties: true
-                properties:
-                  verification:
-                    $ref: "#/components/schemas/DeveloperVerification"
-        "404":
-          description: Developer was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
-  /admin/certificate-requests/{csr_id}/issue:
-    post:
-      tags: [Admin Certificates]
-      summary: Issue certificate from CSR
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/CsrId"
-      responses:
-        "201":
-          description: Certificate issued.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [certificate]
-                additionalProperties: true
-                properties:
-                  certificate:
-                    $ref: "#/components/schemas/Certificate"
-        "403":
-          description: Developer verification is required.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: CSR was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "503":
-          description: Certificate authority is not configured.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /admin/certificate-requests/{csr_id}/reject:
-    post:
-      tags: [Admin Certificates]
-      summary: Reject certificate signing request
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/CsrId"
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              properties:
-                reason:
-                  type: string
-                  nullable: true
-      responses:
-        "200":
-          description: CSR rejected.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [certificate_request]
-                additionalProperties: true
-                properties:
-                  certificate_request:
-                    $ref: "#/components/schemas/CertificateRequest"
-        "404":
-          description: CSR was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /admin/certificates/{certificate_id}/revoke:
-    post:
-      tags: [Admin Certificates]
-      summary: Revoke certificate
-      security:
-        - sessionCookie: []
-          csrfToken: []
-      parameters:
-        - $ref: "#/components/parameters/CertificateId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [reason]
-              additionalProperties: false
-              properties:
-                reason:
-                  type: string
-                  minLength: 1
-      responses:
-        "200":
-          description: Certificate revoked.
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [certificate]
-                additionalProperties: true
-                properties:
-                  certificate:
-                    $ref: "#/components/schemas/Certificate"
-        "404":
-          description: Certificate was not found.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "422":
-          $ref: "#/components/responses/ValidationError"
-
+        "200": { description: Package本体 }
+        "404": { description: Packageが存在しない }
 components:
   securitySchemes:
     sessionCookie:
       type: apiKey
       in: cookie
-      name: PHPSESSID
-      description: PHP session cookie. Frontend sends it with credentials include.
+      name: mochios_appstore_session
+      description: Accounts統合までの暫定AppStore session。
     csrfToken:
       type: apiKey
       in: header
       name: X-CSRF-Token
-      description: CSRF token returned by /auth/csrf or /auth/me. Required for POST, PUT, PATCH, and DELETE requests.
-
+      description: 状態変更リクエストに必要な暫定CSRF token。
   parameters:
-    Limit:
-      name: limit
-      in: query
-      required: false
-      schema:
-        type: integer
-        minimum: 0
-        default: 50
-      example: 50
-    Offset:
-      name: offset
-      in: query
-      required: false
-      schema:
-        type: integer
-        minimum: 0
-        default: 0
-      example: 0
     BundleId:
       name: bundle_id
       in: path
       required: true
       schema:
-        $ref: "#/components/schemas/BundleId"
-      example: com.mochi.binder
-    DeveloperId:
-      name: developer_id
-      in: path
-      required: true
-      schema:
-        $ref: "#/components/schemas/DeveloperId"
-    PublicKeyPath:
-      name: public_key
-      in: path
-      required: true
-      description: Base64url-encoded 32-byte Ed25519 public key without padding.
-      schema:
         type: string
-        pattern: "^[A-Za-z0-9_-]{43}$"
-      example: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-    TeamId:
-      name: team_id
-      in: path
-      required: true
-      schema:
-        $ref: "#/components/schemas/TeamId"
+        pattern: "^[a-z0-9.-]+\\.[a-z0-9.-]+$"
     ReleaseId:
       name: release_id
       in: path
       required: true
-      schema:
-        $ref: "#/components/schemas/ReleaseId"
-    CertificateId:
-      name: certificate_id
-      in: path
-      required: true
-      schema:
-        type: string
-      example: cert_0123456789abcdef0123456789abcdef
-    CsrId:
-      name: csr_id
-      in: path
-      required: true
-      schema:
-        type: string
-      example: csr_0123456789abcdef0123456789abcdef
-
-  responses:
-    Unauthorized:
-      description: Not logged in.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    Forbidden:
-      description: Permission is required.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    MethodNotAllowed:
-      description: Method not allowed.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    ValidationError:
-      description: Validation error.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    AppNotFound:
-      description: App was not found.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-    ReleaseNotFound:
-      description: Release was not found.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
-
-  schemas:
-    ErrorResponse:
-      type: object
-      required: [error]
-      additionalProperties: true
-      properties:
-        error:
-          type: object
-          required: [code, message]
-          additionalProperties: true
-          properties:
-            code:
-              type: string
-              examples:
-                - UNAUTHORIZED
-                - VALIDATION_ERROR
-                - APP_NOT_FOUND
-            message:
-              type: string
-              examples:
-                - Not logged in
-                - bundle_id is invalid
-
-    DeveloperId:
-      type: string
-      pattern: "^dev_[0-9a-f]{32}$"
-
-    DeveloperIdNullable:
-      oneOf:
-        - $ref: "#/components/schemas/DeveloperId"
-        - type: "null"
-
+      schema: { type: string }
     TeamId:
-      type: string
-      pattern: "^team_[0-9a-f]{32}$"
-
-    ReleaseId:
-      type: string
-
-    BundleId:
-      type: string
-      pattern: "^[a-z0-9.-]+\\.[a-z0-9.-]+$"
-
-    DateTimeString:
-      type: string
-      format: date-time
-
-    TeamRole:
-      type: string
-      enum: [owner, admin, developer, viewer]
-      default: developer
-
-    ReleaseStatus:
-      type: string
-      enum: [draft, submitted, published, rejected]
-
-    DeveloperStatus:
-      type: string
-      enum: [active, suspended, deleted]
-      default: active
-
-    Developer:
-      type: object
-      additionalProperties: true
-      properties:
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        provider:
-          type: string
-        provider_username:
-          type: string
-          nullable: true
-        github_login:
-          type: string
-          nullable: true
-        github_username:
-          type: string
-          nullable: true
-        username:
-          type: string
-          nullable: true
-        status:
-          $ref: "#/components/schemas/DeveloperStatus"
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    OAuthUser:
-      type: object
-      additionalProperties: true
-      properties:
-        id:
-          type: string
-        provider:
-          type: string
-        provider_user_id:
-          type: string
-        username:
-          type: string
-        display_name:
-          type: string
-          nullable: true
-        avatar_url:
-          type: string
-          format: uri
-          nullable: true
-
-    PublicApp:
-      type: object
-      additionalProperties: true
-      properties:
-        bundle_id:
-          $ref: "#/components/schemas/BundleId"
-        app_name:
-          type: string
-        display_name:
-          type: string
-        name:
-          type: string
-        description:
-          type: string
-          nullable: true
-        short_description:
-          type: string
-          nullable: true
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        developer_name:
-          type: string
-          nullable: true
-        category:
-          type: string
-          nullable: true
-        kind:
-          type: string
-          enum: [app, game]
-        visibility:
-          type: string
-          enum: [public, private]
-        latest_version:
-          type: string
-          nullable: true
-        icon_url:
-          type: string
-          format: uri
-          nullable: true
-        icon_path:
-          type: string
-          nullable: true
-        price:
-          type: integer
-          nullable: true
-          minimum: 0
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    DeveloperApp:
-      type: object
-      additionalProperties: true
-      properties:
-        bundle_id:
-          $ref: "#/components/schemas/BundleId"
-        display_name:
-          type: string
-        app_name:
-          type: string
-        description:
-          type: string
-          nullable: true
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        team_id:
-          oneOf:
-            - $ref: "#/components/schemas/TeamId"
-            - type: "null"
-        visibility:
-          type: string
-          enum: [private, public]
-          default: private
-        latest_version:
-          type: string
-          nullable: true
-        status:
-          type: string
-          nullable: true
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    BundleIdRecord:
-      type: object
-      additionalProperties: true
-      properties:
-        bundle_id:
-          $ref: "#/components/schemas/BundleId"
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        app_name:
-          type: string
-        status:
-          type: string
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    PublicKey:
-      type: object
-      additionalProperties: true
-      properties:
-        key_id:
-          type: string
-        id:
-          type: string
-          nullable: true
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        public_key:
-          type: string
-        key:
-          type: string
-          nullable: true
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        revoked_at:
-          oneOf:
-            - $ref: "#/components/schemas/DateTimeString"
-            - type: "null"
-
-    PublicKeyVerification:
-      type: object
-      required:
-        - public_key
-        - fingerprint
-        - revoked_at
-      additionalProperties: false
-      properties:
-        public_key:
-          type: string
-          description: Base64-encoded 32-byte Ed25519 public key.
-        fingerprint:
-          type: string
-          description: SHA-256 fingerprint of the raw 32-byte Ed25519 public key.
-          pattern: "^[a-f0-9]{64}$"
-        revoked_at:
-          type: string
-          format: date-time
-          nullable: true
-
-    Release:
-      type: object
-      additionalProperties: true
-      properties:
-        release_id:
-          $ref: "#/components/schemas/ReleaseId"
-        bundle_id:
-          $ref: "#/components/schemas/BundleId"
-        display_name:
-          type: string
-          nullable: true
-        version:
-          type: string
-        status:
-          $ref: "#/components/schemas/ReleaseStatus"
-        manifest_hash:
-          type: string
-          nullable: true
-        package_hash:
-          type: string
-          nullable: true
-        signature:
-          type: string
-          nullable: true
-        certificate_id:
-          type: string
-          nullable: true
-        package_path:
-          type: string
-          nullable: true
-        package_size:
-          type: integer
-          nullable: true
-          minimum: 0
-        changelog:
-          type: string
-          nullable: true
-        review_message:
-          type: string
-          nullable: true
-        submitted_at:
-          oneOf:
-            - $ref: "#/components/schemas/DateTimeString"
-            - type: "null"
-        reviewed_at:
-          oneOf:
-            - $ref: "#/components/schemas/DateTimeString"
-            - type: "null"
-        reviewed_by:
-          oneOf:
-            - $ref: "#/components/schemas/DeveloperId"
-            - type: "null"
-        published_at:
-          oneOf:
-            - $ref: "#/components/schemas/DateTimeString"
-            - type: "null"
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    ReleaseUploadResponse:
-      type: object
-      required: [release, package, inspection]
-      additionalProperties: true
-      properties:
-        release:
-          $ref: "#/components/schemas/Release"
-        package:
-          type: object
-          required: [path, size, sha256]
-          additionalProperties: true
-          properties:
-            path:
-              type: string
-            size:
-              type: integer
-              minimum: 0
-            sha256:
-              type: string
-        inspection:
-          type: object
-          required: [about, hashes]
-          additionalProperties: true
-          properties:
-            about:
-              type: object
-              additionalProperties: true
-              properties:
-                bundle_id:
-                  $ref: "#/components/schemas/BundleId"
-                version:
-                  type: string
-            hashes:
-              type: object
-              additionalProperties: true
-              properties:
-                manifest_hash:
-                  type: string
-                content_hash:
-                  type: string
-
-    Team:
-      type: object
-      additionalProperties: true
-      properties:
-        team_id:
-          $ref: "#/components/schemas/TeamId"
-        name:
-          type: string
-        slug:
-          type: string
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        role:
-          $ref: "#/components/schemas/TeamRole"
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    TeamMember:
-      type: object
-      additionalProperties: true
-      properties:
-        team_id:
-          $ref: "#/components/schemas/TeamId"
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        provider_username:
-          type: string
-          nullable: true
-        role:
-          $ref: "#/components/schemas/TeamRole"
-        joined_at:
-          $ref: "#/components/schemas/DateTimeString"
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    DeveloperVerification:
-      type: object
-      additionalProperties: true
-      properties:
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        verification_status:
-          type: string
-          enum: [pending, verified, rejected]
-        note:
-          type: string
-          nullable: true
-        reviewed_by:
-          oneOf:
-            - $ref: "#/components/schemas/DeveloperId"
-            - type: "null"
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    CertificateRequest:
-      type: object
-      additionalProperties: true
-      properties:
-        csr_id:
-          type: string
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        csr_pem:
-          type: string
-        status:
-          type: string
-          enum: [pending, issued, rejected]
-        reason:
-          type: string
-          nullable: true
-        created_at:
-          $ref: "#/components/schemas/DateTimeString"
-        updated_at:
-          $ref: "#/components/schemas/DateTimeString"
-
-    Certificate:
-      type: object
-      additionalProperties: true
-      properties:
-        certificate_id:
-          type: string
-        csr_id:
-          type: string
-          nullable: true
-        developer_id:
-          $ref: "#/components/schemas/DeveloperId"
-        certificate_pem:
-          type: string
-        fingerprint:
-          type: string
-          nullable: true
-        status:
-          type: string
-          enum: [active, revoked]
-        revoked_reason:
-          type: string
-          nullable: true
-        issued_by:
-          oneOf:
-            - $ref: "#/components/schemas/DeveloperId"
-            - type: "null"
-        issued_at:
-          oneOf:
-            - $ref: "#/components/schemas/DateTimeString"
-            - type: "null"
-        revoked_at:
-          oneOf:
-            - $ref: "#/components/schemas/DateTimeString"
-            - type: "null"
+      name: team_id
+      in: path
+      required: true
+      schema: { type: string }
+    DeveloperId:
+      name: developer_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }

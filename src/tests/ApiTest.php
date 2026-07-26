@@ -43,14 +43,6 @@ it('returns release not found for missing release', function (): void {
     assertSame('RELEASE_NOT_FOUND', $payload['error']['code']);
 });
 
-it('returns unauthorized for developer profile without login', function (): void {
-    $response = apiRequest('/developers/me');
-    $payload = decodeJson($response['body']);
-
-    assertSame(401, $response['status']);
-    assertSame('UNAUTHORIZED', $payload['error']['code']);
-});
-
 it('creates and fetches developer scoped resources', function (): void {
     $pdo = Database::get();
     $developerId = 'dev_test_suite';
@@ -70,11 +62,6 @@ it('creates and fetches developer scoped resources', function (): void {
         'developer_id' => $developerId,
     ]);
     $headers = csrfHeaders();
-
-    $profileResponse = apiJsonRequest('/developers/me', [], 'GET', null, $session);
-    $profile = decodeJson($profileResponse['body']);
-    assertSame(200, $profileResponse['status']);
-    assertSame($developerId, $profile['developer']['developer_id']);
 
     $keyResponse = apiJsonRequest(
         '/keys',
@@ -131,7 +118,7 @@ it('creates and fetches developer scoped resources', function (): void {
 
 it('rejects state-changing requests without csrf token', function (): void {
     $pdo = Database::get();
-    $developerId = 'dev_csrf_suite';
+    $developerId = '019b9b17-6f1e-7d18-8a62-9306c63e41a2';
 
     $stmt = $pdo->prepare(
         'INSERT INTO developers (developer_id, created_at, status)
@@ -213,26 +200,6 @@ it('rejects state-changing requests from invalid origins even with csrf token', 
     $fetchPayload = decodeJson($fetchResponse['body']);
     assertSame(403, $fetchResponse['status']);
     assertSame('CSRF_ORIGIN_INVALID', $fetchPayload['error']['code']);
-});
-
-it('rejects cross-site oauth initiation without overwriting state', function (): void {
-    $session = [
-        'oauth_provider' => 'github',
-        'oauth_state' => 'existing-state',
-    ];
-
-    $response = apiJsonRequest(
-        '/oauth',
-        ['provider' => 'github'],
-        'GET',
-        null,
-        $session,
-        ['Sec-Fetch-Site' => 'cross-site']
-    );
-    $payload = decodeJson($response['body']);
-
-    assertSame(403, $response['status']);
-    assertSame('CSRF_ORIGIN_INVALID', $payload['error']['code']);
 });
 
 it('rejects submit and approve when the signing key was revoked', function (): void {

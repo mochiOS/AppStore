@@ -72,33 +72,11 @@ async function init() {
 
     const navUser = document.getElementById('navUser');
     const navUsername = document.getElementById('navUsername');
-    const navAvatar = document.getElementById('navAvatar');
-
     navUser.style.display = 'flex';
     document.getElementById('logoutBtn').style.display = '';
-
-    const devResponse = await showDeveloper();
-    const developer = getDeveloperRecord(devResponse);
-    const githubLogin = getDeveloperUsername(auth, devResponse);
-    navUsername.textContent = githubLogin || auth.developer_id;
-
-    if (githubLogin) {
-        renderGitHubAvatar(navAvatar, githubLogin, 56);
-    }
+    navUsername.textContent = auth.developer_id;
 
     document.getElementById('pd-devId').textContent = auth.developer_id || '—';
-    document.getElementById('pd-github').textContent = githubLogin || '—';
-
-    const createdAt = developer?.["created_at"];
-    document.getElementById('pd-created').textContent =
-        createdAt
-            ? new Date(createdAt).toLocaleDateString('ja-JP')
-            : '—';
-
-    document.getElementById('pd-status').textContent =
-        developer && developer.status
-            ? developer.status
-            : 'active';
 
     await loadApps();
 }

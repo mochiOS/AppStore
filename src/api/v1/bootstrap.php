@@ -36,12 +36,8 @@ require_once ROOT . 'helper/AppRepository.php';
 require_once ROOT . 'helper/ReleaseRepository.php';
 require_once ROOT . 'helper/AppCatalog.php';
 require_once ROOT . 'helper/PackageStorage.php';
-require_once ROOT . 'helper/DeveloperRepository.php';
-require_once ROOT . 'helper/DeveloperCertificateRepository.php';
-require_once ROOT . 'helper/CertificateAuthority.php';
 require_once ROOT . 'helper/PublicKeyRepository.php';
 require_once ROOT . 'helper/BundleIdRepository.php';
-require_once ROOT . 'helper/OAuth/Provider.php';
 require_once ROOT . 'helper/DeveloperAppRepository.php';
 require_once ROOT . 'helper/DeveloperReleaseRepository.php';
 require_once ROOT . 'helper/PackageUploadService.php';
@@ -75,15 +71,12 @@ return new ApiContext(
     appRepo: $appRepo,
     releaseRepo: $releaseRepo,
     appCatalog: new AppCatalog($appRepo, $releaseRepo),
-    developerRepo: new DeveloperRepository($db),
     publicKeyRepo: new PublicKeyRepository($db),
     bundleIdRepo: new BundleIdRepository($db),
     developerAppRepo: new DeveloperAppRepository($db),
     developerReleaseRepo: new DeveloperReleaseRepository($db),
     packageUploadService: new PackageUploadService(),
     packageInspectService: new PackageInspectService(),
-    certificateRepo: new DeveloperCertificateRepository($db),
-    certificateAuthority: CertificateAuthority::fromAppConfig($appConfig),
     storage: new PackageStorage(ROOT),
     adminRepo: new AdminRepository($db),
     packageSignatureVerifier: new PackageSignatureVerifier(

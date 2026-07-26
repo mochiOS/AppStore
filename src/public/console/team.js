@@ -238,7 +238,6 @@ async function loadTeamMembers() {
 
     list.innerHTML = members.map(member => {
         const developerId = escapeHtml(member.developer_id || '');
-        const username = escapeHtml(member.provider_username || '');
         const role = escapeHtml(member.role || 'viewer');
         const joinedAt = member.joined_at
             ? new Date(member.joined_at).toLocaleDateString('ja-JP')
@@ -247,7 +246,7 @@ async function loadTeamMembers() {
         return `
             <div class="list-item">
                 <div class="item-main">
-                    <div class="item-title">${username || developerId}</div>
+                    <div class="item-title">${developerId}</div>
                     <div class="item-sub">${developerId}</div>
                     <div class="item-meta">${escapeHtml(joinedAt)}</div>
                 </div>

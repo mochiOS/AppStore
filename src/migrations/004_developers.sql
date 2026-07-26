@@ -1,18 +1,7 @@
 CREATE TABLE IF NOT EXISTS developers (
     developer_id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('active', 'suspended', 'revoked'))
-);
-
-CREATE TABLE IF NOT EXISTS oauth_links (
-    developer_id TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    provider_subject_hash TEXT NOT NULL,
-    linked_at TEXT NOT NULL,
-    provider_username TEXT,
-    updated_at TEXT,
-    PRIMARY KEY (provider, provider_subject_hash),
-    FOREIGN KEY (developer_id) REFERENCES developers(developer_id)
+    status TEXT NOT NULL CHECK(status IN ('active', 'suspended', 'deleted'))
 );
 
 CREATE TABLE IF NOT EXISTS public_keys (

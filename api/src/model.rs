@@ -34,16 +34,60 @@ fn default_price() -> String {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReleaseInput {
     pub version: String,
-    pub package_size: u64,
-    pub package_sha256: String,
-    #[serde(default)]
-    pub manifest_hash: Option<String>,
-    pub signature: String,
+    pub repository: String,
+    pub release_tag: String,
+    pub asset: String,
     pub certificate_id: String,
+    pub minimum_mochios_version: String,
     #[serde(default)]
     pub changelog: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GitHubReleaseAssetRequest<'a> {
+    pub owner: &'a str,
+    pub repository: &'a str,
+    pub release_tag: &'a str,
+    pub asset_name: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountsReleaseAssetEnvelope {
+    pub release_asset: GitHubReleaseAsset,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GitHubReleaseAsset {
+    pub repository_id: u64,
+    pub repository: String,
+    pub repository_permission: String,
+    pub release_id: u64,
+    pub release_tag: String,
+    pub immutable: bool,
+    pub prerelease: bool,
+    pub asset_id: u64,
+    pub asset_name: String,
+    pub download_url: String,
+    pub file_size: u64,
+    pub github_digest: Option<String>,
+    pub asset_created_at: String,
+    pub asset_updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationInput {
+    pub package_id: String,
+    pub version: String,
+    pub file_size: u64,
+    pub sha256: String,
+    pub manifest_hash: String,
+    pub signature: String,
+    pub certificate_id: String,
+    pub minimum_mochios_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,7 +144,14 @@ pub struct ReleaseView {
     pub size: i64,
     pub sha256: String,
     pub changelog: Option<String>,
-    pub status: String,
+    pub review_status: String,
+    pub publish_status: String,
     pub download_url: String,
+    pub github_repository: String,
+    pub github_release_tag: String,
+    pub github_asset_id: i64,
+    pub asset_name: String,
+    pub developer_certificate_id: String,
+    pub minimum_mochios_version: String,
     pub created_at: i64,
 }

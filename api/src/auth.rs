@@ -1,5 +1,13 @@
 use subtle::ConstantTimeEq;
-use worker::{Headers, Method, Request, RequestInit, Result};
+use worker::{Headers, Method, Request, RequestInit, Result, wasm_bindgen::JsValue};
+
+use crate::model::{AccountsReleaseAssetEnvelope, GitHubReleaseAsset, GitHubReleaseAssetRequest};
+
+pub struct ServiceError {
+    pub status: u16,
+    pub code: String,
+    pub message: String,
+}
 
 fn authorization_headers(req: &Request) -> Result<Option<Headers>> {
     let authorization = req.headers().get("Authorization")?.unwrap_or_default();
@@ -66,6 +74,68 @@ pub async fn certificate_public_key(
                 .map(str::to_owned)
         })
         .flatten())
+}
+
+pub async fn certificate_is_valid(env: &worker::Env, certificate_id: &str) -> Result<bool> {
+    let request = Request::new(
+        &format!("https://developer-ca/v1/certificates/{certificate_id}/status"),
+        Method::Get,
+    )?;
+    let mut response = env.service("DEVELOPER_CA")?.fetch_request(request).await?;
+    if response.status_code() != 200 {
+        return Ok(false);
+    }
+    let value: serde_json::Value = response.json().await?;
+    Ok(value.get("valid").and_then(|value| value.as_bool()) == Some(true))
+}
+
+pub async fn github_release_asset(
+    req: &Request,
+    env: &worker::Env,
+    input: &GitHubReleaseAssetRequest<'_>,
+) -> Result<std::result::Result<GitHubReleaseAsset, ServiceError>> {
+    let authorization = req.headers().get("Authorization")?.unwrap_or_default();
+    if !authorization.starts_with("Bearer ") {
+        return Ok(Err(ServiceError {
+            status: 401,
+            code: "UNAUTHENTICATED".into(),
+            message: "An Accounts session is required".into(),
+        }));
+    }
+    let headers = Headers::new();
+    headers.set("Authorization", &authorization)?;
+    headers.set(
+        "X-AppStore-Service-Token",
+        &env.secret("APPSTORE_SERVICE_TOKEN")?.to_string(),
+    )?;
+    headers.set("Content-Type", "application/json")?;
+    let body = serde_json::to_string(input)?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(JsValue::from_str(&body)));
+    let request =
+        Request::new_with_init("https://accounts/v1/internal/github/release-asset", &init)?;
+    let mut response = env.service("ACCOUNTS")?.fetch_request(request).await?;
+    let status = response.status_code();
+    if status == 200 {
+        let envelope: AccountsReleaseAssetEnvelope = response.json().await?;
+        return Ok(Ok(envelope.release_asset));
+    }
+    let value: serde_json::Value = response.json().await.unwrap_or_default();
+    Ok(Err(ServiceError {
+        status,
+        code: value
+            .pointer("/error/code")
+            .and_then(|value| value.as_str())
+            .unwrap_or("GITHUB_LOOKUP_FAILED")
+            .to_owned(),
+        message: value
+            .pointer("/error/message")
+            .and_then(|value| value.as_str())
+            .unwrap_or("GitHub release verification failed")
+            .to_owned(),
+    }))
 }
 
 pub fn admin(req: &Request, env: &worker::Env) -> Result<Option<String>> {

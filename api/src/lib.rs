@@ -18,6 +18,7 @@ const STATUS_ORIGIN: &str = "https://status.mochios.org";
 const STORE_ORIGIN: &str = "https://store.mochios.org";
 const CONSOLE_ORIGIN: &str = "https://console.mochios.org";
 const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_SAFE_JS_INTEGER: u64 = 9_007_199_254_740_991;
 
 fn now() -> i64 {
     (Date::now().as_millis() / 1000) as i64
@@ -85,6 +86,44 @@ fn valid_version(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
 }
 
+fn github_repository(value: &str) -> Option<(&str, &str)> {
+    let (owner, repository) = value.split_once('/')?;
+    let valid = |part: &str, max: usize| {
+        !part.is_empty()
+            && part.len() <= max
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    };
+    (valid(owner, 39) && valid(repository, 100) && !repository.contains('/'))
+        .then_some((owner, repository))
+}
+
+fn github_download_url(location: &str) -> Option<Url> {
+    let url = Url::parse(location).ok()?;
+    let valid = url.scheme() == "https"
+        && url.host_str() == Some("github.com")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.fragment().is_none()
+        && url.path().contains("/releases/download/");
+    valid.then_some(url)
+}
+
+fn redirect_to(location: &str, cache_control: &str) -> Result<Response> {
+    let Some(url) = github_download_url(location) else {
+        return error(
+            "DOWNLOAD_URL_INVALID",
+            "Release download URL is invalid",
+            500,
+        );
+    };
+    let mut response = Response::empty()?.with_status(302);
+    response.headers_mut().set("Location", url.as_str())?;
+    response.headers_mut().set("Cache-Control", cache_control)?;
+    Ok(response)
+}
+
 fn valid_role(value: &str) -> bool {
     matches!(value, "owner" | "admin" | "developer" | "viewer")
 }
@@ -96,7 +135,7 @@ fn decode_base64(value: &str) -> Option<Vec<u8>> {
         .or_else(|| URL_SAFE_NO_PAD.decode(value).ok())
 }
 
-fn valid_package_signature(public_key: &str, signature: &str, package_sha256: &str) -> bool {
+fn valid_hash_signature(public_key: &str, signature: &str, signed_hash: &str) -> bool {
     let Some(key_bytes) = decode_base64(public_key) else {
         return false;
     };
@@ -112,10 +151,14 @@ fn valid_package_signature(public_key: &str, signature: &str, package_sha256: &s
     let Ok(signature) = Signature::from_slice(&signature_bytes) else {
         return false;
     };
-    let Ok(hash) = hex::decode(package_sha256) else {
+    let Ok(hash) = hex::decode(signed_hash) else {
         return false;
     };
     key.verify_strict(&hash, &signature).is_ok()
+}
+
+fn js_integer(value: u64) -> Option<f64> {
+    (value <= MAX_SAFE_JS_INTEGER).then_some(value as f64)
 }
 
 fn page(req: &Request) -> (i64, i64) {
@@ -244,33 +287,29 @@ async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .query_pairs()
         .find(|(key, _)| key == "version")
         .map(|(_, value)| value.into_owned());
-    let release: Option<Value> = store::first(&db(&ctx)?,
-        "SELECT package_key,version,package_size,package_sha256 FROM releases WHERE bundle_id=?1 AND status='published' AND (?2 IS NULL OR version=?2) ORDER BY published_at DESC LIMIT 1",
-        &[store::value(bundle_id), version.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL, store::value)]).await?;
+    let release: Option<Value> = store::first(
+        &db(&ctx)?,
+        "SELECT download_url FROM releases
+          WHERE bundle_id=?1 AND review_status='approved' AND publish_status='published'
+            AND validation_status='valid' AND download_url IS NOT NULL
+            AND sha256 IS NOT NULL AND signature IS NOT NULL
+            AND (?2 IS NULL OR version=?2)
+          ORDER BY published_at DESC LIMIT 1",
+        &[
+            store::value(bundle_id),
+            version
+                .as_deref()
+                .map_or(worker::wasm_bindgen::JsValue::NULL, store::value),
+        ],
+    )
+    .await?;
     let Some(release) = release else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
     };
-    let key = value_str(&release, "package_key").unwrap_or("");
-    let Some(object) = ctx.env.bucket("PACKAGES")?.get(key).execute().await? else {
-        return error("PACKAGE_NOT_FOUND", "Package object not found", 404);
-    };
-    let Some(body) = object.body() else {
-        return error("PACKAGE_NOT_FOUND", "Package body not found", 404);
-    };
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/octet-stream")?;
-    headers.set(
-        "Content-Disposition",
-        &format!(
-            "attachment; filename=\"{}-{}.pkg\"",
-            bundle_id,
-            value_str(&release, "version").unwrap_or("release")
-        ),
-    )?;
-    headers.set("Content-Length", &object.size().to_string())?;
-    headers.set("ETag", &object.http_etag())?;
-    headers.set("Cache-Control", "public, max-age=31536000, immutable")?;
-    Ok(Response::from_body(body.response_body()?)?.with_headers(headers))
+    redirect_to(
+        value_str(&release, "download_url").unwrap_or(""),
+        "public, max-age=300",
+    )
 }
 
 async fn bundle_ids(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -391,13 +430,15 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         return error("APP_NOT_FOUND", "App not found", 404);
     }
     let input: ReleaseInput = req.json().await?;
+    let Some((owner, repository)) = github_repository(input.repository.trim()) else {
+        return error("VALIDATION_ERROR", "GitHub repository is invalid", 422);
+    };
     if !valid_version(input.version.trim())
-        || input.package_size == 0
-        || input.package_size > MAX_PACKAGE_BYTES
-        || input.package_sha256.len() != 64
-        || hex::decode(&input.package_sha256).is_err()
-        || input.signature.trim().is_empty()
+        || input.release_tag.trim().is_empty()
+        || input.release_tag.eq_ignore_ascii_case("latest")
+        || !input.asset.trim().ends_with(".mpkg")
         || input.certificate_id.trim().is_empty()
+        || input.minimum_mochios_version.trim().is_empty()
     {
         return error("VALIDATION_ERROR", "Release metadata is invalid", 422);
     }
@@ -411,17 +452,89 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             403,
         );
     };
-    if !valid_package_signature(&public_key, input.signature.trim(), &input.package_sha256) {
+    let lookup = GitHubReleaseAssetRequest {
+        owner,
+        repository,
+        release_tag: input.release_tag.trim(),
+        asset_name: input.asset.trim(),
+    };
+    let asset = match auth::github_release_asset(&req, &ctx.env, &lookup).await? {
+        Ok(asset) => asset,
+        Err(cause) => return error(&cause.code, &cause.message, cause.status),
+    };
+    if !asset
+        .repository
+        .eq_ignore_ascii_case(input.repository.trim())
+        || asset.release_tag != input.release_tag.trim()
+        || asset.asset_name != input.asset.trim()
+        || !matches!(
+            asset.repository_permission.as_str(),
+            "push" | "maintain" | "admin"
+        )
+        || asset.file_size == 0
+        || asset.file_size > MAX_PACKAGE_BYTES
+        || github_download_url(&asset.download_url).is_none()
+    {
         return error(
-            "SIGNATURE_INVALID",
-            "Package SHA-256 signature is invalid",
+            "GITHUB_ASSET_INVALID",
+            "GitHub release asset metadata is invalid",
             422,
         );
     }
+    let (Some(repository_id), Some(github_release_id), Some(github_asset_id)) = (
+        js_integer(asset.repository_id),
+        js_integer(asset.release_id),
+        js_integer(asset.asset_id),
+    ) else {
+        return error(
+            "GITHUB_ID_UNSUPPORTED",
+            "GitHub returned an identifier that cannot be represented safely",
+            422,
+        );
+    };
     let release_id = id("rel");
-    let package_key = format!("packages/{bundle_id}/{}/{}.pkg", input.version, release_id);
     let timestamp = now();
-    let result=store::run(&db(&ctx)?,"INSERT INTO releases(release_id,bundle_id,version,package_key,package_size,package_sha256,manifest_hash,signature,certificate_id,changelog,status,created_at) VALUES(?1,?2,?3,?4,?5,lower(?6),?7,?8,?9,?10,'draft',?11)",&[store::value(&release_id),store::value(&bundle_id),store::value(input.version.trim()),store::value(&package_key),store::value(input.package_size as f64),store::value(&input.package_sha256),input.manifest_hash.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(input.signature.trim()),store::value(input.certificate_id.trim()),input.changelog.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(timestamp)]).await;
+    let result = store::run(
+        &db(&ctx)?,
+        "INSERT INTO releases(
+           release_id,bundle_id,version,github_repository_id,github_repository,
+           github_release_id,github_release_tag,github_release_immutable,github_prerelease,
+           github_asset_id,asset_name,download_url,file_size,github_digest,
+           github_asset_created_at,github_asset_updated_at,developer_certificate_id,
+           developer_public_key,minimum_mochios_version,changelog,registered_by,created_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+        &[
+            store::value(&release_id),
+            store::value(&bundle_id),
+            store::value(input.version.trim()),
+            store::value(repository_id),
+            store::value(&asset.repository),
+            store::value(github_release_id),
+            store::value(&asset.release_tag),
+            store::value(if asset.immutable { 1.0 } else { 0.0 }),
+            store::value(if asset.prerelease { 1.0 } else { 0.0 }),
+            store::value(github_asset_id),
+            store::value(&asset.asset_name),
+            store::value(&asset.download_url),
+            store::value(asset.file_size as f64),
+            asset
+                .github_digest
+                .as_deref()
+                .map_or(worker::wasm_bindgen::JsValue::NULL, store::value),
+            store::value(&asset.asset_created_at),
+            store::value(&asset.asset_updated_at),
+            store::value(input.certificate_id.trim()),
+            store::value(&public_key),
+            store::value(input.minimum_mochios_version.trim()),
+            input
+                .changelog
+                .as_deref()
+                .map_or(worker::wasm_bindgen::JsValue::NULL, store::value),
+            store::value(&developer),
+            store::value(timestamp),
+        ],
+    )
+    .await;
     if result.is_err() {
         return error(
             "RELEASE_ALREADY_EXISTS",
@@ -435,12 +548,12 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         "release.create",
         "release",
         &release_id,
-        json!({"bundle_id":bundle_id,"version":input.version}),
+        json!({"bundle_id":bundle_id,"version":input.version,"github_asset_id":asset.asset_id}),
         timestamp,
     )
     .await?;
     json_response(
-        &json!({"release_id":release_id,"status":"draft","package_upload_url":format!("/v1/developer/releases/{release_id}/package")}),
+        &json!({"release_id":release_id,"validation_status":"pending","review_status":"pending","publish_status":"draft"}),
         201,
     )
 }
@@ -466,114 +579,111 @@ async fn list_developer_releases(req: Request, ctx: RouteContext<()>) -> Result<
     json_response(&json!({"bundle_id":bundle_id,"releases":rows}), 200)
 }
 
-async fn upload_package(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let developer = match require_developer(&req, &ctx.env).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r),
+async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    match store::release_by_id(&db(&ctx)?, param(&ctx, "release_id")).await? {
+        Some(release) => json_response(&json!({"admin":actor,"release":release}), 200),
+        None => error("RELEASE_NOT_FOUND", "Release not found", 404),
+    }
+}
+
+async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
     };
     let release_id = param(&ctx, "release_id");
-    let Some(release) = store::owned_release(&db(&ctx)?, &developer, release_id).await? else {
+    let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
     };
-    if value_str(&release, "status") != Some("draft") {
+    if value_str(&release, "validation_status") != Some("pending")
+        || value_str(&release, "review_status") != Some("pending")
+        || value_str(&release, "publish_status") != Some("draft")
+    {
         return error(
             "INVALID_RELEASE_STATUS",
-            "Only draft releases can receive a package",
+            "Only pending draft releases can be validated",
             409,
         );
     }
+    let input: ValidationInput = req.json().await?;
+    let sha256 = input.sha256.to_ascii_lowercase();
+    let manifest_hash = input.manifest_hash.to_ascii_lowercase();
     let expected_size = release
-        .get("package_size")
+        .get("file_size")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let content_length = req
-        .headers()
-        .get("Content-Length")?
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
-    if content_length != expected_size {
+    if input.package_id != value_str(&release, "bundle_id").unwrap_or("")
+        || input.version != value_str(&release, "version").unwrap_or("")
+        || input.file_size != expected_size
+        || input.certificate_id != value_str(&release, "developer_certificate_id").unwrap_or("")
+        || input.minimum_mochios_version
+            != value_str(&release, "minimum_mochios_version").unwrap_or("")
+        || sha256.len() != 64
+        || hex::decode(&sha256).is_err()
+        || manifest_hash.len() != 64
+        || hex::decode(&manifest_hash).is_err()
+        || input.signature.trim().is_empty()
+    {
         return error(
-            "PACKAGE_SIZE_MISMATCH",
-            "Content-Length does not match release metadata",
+            "PACKAGE_VALIDATION_MISMATCH",
+            "Validated .mpkg metadata does not match the registered release",
             422,
         );
     }
-    let checksum = hex::decode(value_str(&release, "package_sha256").unwrap_or(""))
-        .map_err(|e| Error::RustError(e.to_string()))?;
-    let key = value_str(&release, "package_key").unwrap_or("").to_string();
-    let stream = FixedLengthStream::wrap(req.stream()?, expected_size);
-    let mut metadata = HashMap::new();
-    metadata.insert("release_id".into(), release_id.into());
-    metadata.insert(
-        "bundle_id".into(),
-        value_str(&release, "bundle_id").unwrap_or("").into(),
-    );
-    ctx.env
-        .bucket("PACKAGES")?
-        .put(&key, stream)
-        .sha256(checksum)
-        .custom_metadata(metadata)
-        .execute()
-        .await?;
-    store::audit(
-        &db(&ctx)?,
-        Some(&developer),
-        "release.package.upload",
-        "release",
-        release_id,
-        json!({"size":expected_size}),
-        now(),
-    )
-    .await?;
-    json_response(&json!({"uploaded":true,"release_id":release_id}), 200)
-}
-
-async fn submit_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let developer = match require_developer(&req, &ctx.env).await? {
-        Ok(v) => v,
-        Err(r) => return Ok(r),
-    };
-    let release_id = param(&ctx, "release_id");
-    let Some(release) = store::owned_release(&db(&ctx)?, &developer, release_id).await? else {
-        return error("RELEASE_NOT_FOUND", "Release not found", 404);
-    };
-    if !matches!(value_str(&release, "status"), Some("draft" | "rejected")) {
-        return error(
-            "INVALID_RELEASE_STATUS",
-            "Only draft or rejected releases can be submitted",
-            409,
-        );
-    }
-    let key = value_str(&release, "package_key").unwrap_or("");
-    let Some(object) = ctx.env.bucket("PACKAGES")?.head(key).await? else {
-        return error("PACKAGE_NOT_FOUND", "Upload package before submitting", 409);
-    };
-    if object.size()
-        != release
-            .get("package_size")
-            .and_then(Value::as_u64)
-            .unwrap_or(0)
+    if let Some(github_digest) = value_str(&release, "github_digest")
+        && let Some(github_sha256) = github_digest.strip_prefix("sha256:")
+        && !github_sha256.eq_ignore_ascii_case(&sha256)
     {
         return error(
-            "PACKAGE_SIZE_MISMATCH",
-            "Stored package size is invalid",
-            409,
+            "GITHUB_DIGEST_MISMATCH",
+            "GitHub asset digest does not match the reviewed .mpkg",
+            422,
+        );
+    }
+    let public_key = value_str(&release, "developer_public_key").unwrap_or("");
+    if !valid_hash_signature(public_key, input.signature.trim(), &manifest_hash) {
+        return error(
+            "SIGNATURE_INVALID",
+            "The embedded Developer Certificate signature is invalid",
+            422,
+        );
+    }
+    if !auth::certificate_is_valid(&ctx.env, input.certificate_id.trim()).await? {
+        return error(
+            "CERTIFICATE_INVALID",
+            "The Developer Certificate is no longer valid",
+            403,
         );
     }
     let timestamp = now();
     store::run(
         &db(&ctx)?,
-        "UPDATE releases SET status='submitted',submitted_at=?1 WHERE release_id=?2",
-        &[store::value(timestamp), store::value(release_id)],
+        "UPDATE releases
+            SET sha256=?1,manifest_hash=?2,signature=?3,validation_status='valid',
+                review_status='submitted',validation_message=NULL,validated_at=?4,
+                validated_by=?5,submitted_at=?4
+          WHERE release_id=?6 AND validation_status='pending' AND review_status='pending'",
+        &[
+            store::value(&sha256),
+            store::value(&manifest_hash),
+            store::value(input.signature.trim()),
+            store::value(timestamp),
+            store::value(&actor),
+            store::value(release_id),
+        ],
     )
     .await?;
     store::audit(
         &db(&ctx)?,
-        Some(&developer),
-        "release.submit",
+        Some(&actor),
+        "release.validate",
         "release",
         release_id,
-        json!({}),
+        json!({"sha256":sha256,"file_size":input.file_size}),
         timestamp,
     )
     .await?;
@@ -594,14 +704,28 @@ async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response>
         .find(|(k, _)| k == "status")
         .map(|(_, v)| v.into_owned())
         .unwrap_or_else(|| "submitted".into());
-    if !matches!(
-        status.as_str(),
-        "draft" | "submitted" | "published" | "rejected"
-    ) {
-        return error("VALIDATION_ERROR", "status is invalid", 422);
-    }
+    let (column, value) = match status.as_str() {
+        "pending" | "submitted" | "approved" | "rejected" => ("review_status", status.as_str()),
+        "draft" | "published" | "revoked" => ("publish_status", status.as_str()),
+        _ => return error("VALIDATION_ERROR", "status is invalid", 422),
+    };
     let (limit, offset) = page(&req);
-    let rows:Vec<Value>=store::rows(&db(&ctx)?,"SELECT r.*,a.display_name,a.icon_url,a.description FROM releases r LEFT JOIN apps a ON a.bundle_id=r.bundle_id WHERE r.status=?1 ORDER BY r.submitted_at DESC,r.created_at DESC LIMIT ?2 OFFSET ?3",&[store::value(&status),store::value(limit),store::value(offset)]).await?;
+    let sql = format!(
+        "SELECT r.*,a.display_name,a.icon_url,a.description
+           FROM releases r LEFT JOIN apps a ON a.bundle_id=r.bundle_id
+          WHERE r.{column}=?1
+          ORDER BY r.submitted_at DESC,r.created_at DESC LIMIT ?2 OFFSET ?3"
+    );
+    let rows: Vec<Value> = store::rows(
+        &db(&ctx)?,
+        &sql,
+        &[
+            store::value(value),
+            store::value(limit),
+            store::value(offset),
+        ],
+    )
+    .await?;
     json_response(&json!({"admin":actor,"status":status,"releases":rows}), 200)
 }
 
@@ -614,15 +738,30 @@ async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response
     let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
     };
-    if value_str(&release, "status") != Some("submitted") {
+    if value_str(&release, "validation_status") != Some("valid")
+        || value_str(&release, "review_status") != Some("submitted")
+        || value_str(&release, "publish_status") != Some("draft")
+    {
         return error(
             "INVALID_RELEASE_STATUS",
-            "Only submitted releases can be approved",
+            "Only validated submitted releases can be approved",
             409,
         );
     }
+    if !auth::certificate_is_valid(
+        &ctx.env,
+        value_str(&release, "developer_certificate_id").unwrap_or(""),
+    )
+    .await?
+    {
+        return error(
+            "CERTIFICATE_INVALID",
+            "The Developer Certificate is no longer valid",
+            403,
+        );
+    }
     let timestamp = now();
-    store::run(&db(&ctx)?,"UPDATE releases SET status='published',review_message=NULL,reviewed_at=?1,reviewed_by=?2,published_at=?1 WHERE release_id=?3",&[store::value(timestamp),store::value(&actor),store::value(release_id)]).await?;
+    store::run(&db(&ctx)?,"UPDATE releases SET review_status='approved',publish_status='published',review_message=NULL,reviewed_at=?1,reviewed_by=?2,published_at=?1 WHERE release_id=?3",&[store::value(timestamp),store::value(&actor),store::value(release_id)]).await?;
     store::run(
         &db(&ctx)?,
         "UPDATE apps SET latest_version=?1,visibility='public',updated_at=?2 WHERE bundle_id=?3",
@@ -662,7 +801,9 @@ async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
     };
-    if value_str(&release, "status") != Some("submitted") {
+    if value_str(&release, "review_status") != Some("submitted")
+        || value_str(&release, "publish_status") != Some("draft")
+    {
         return error(
             "INVALID_RELEASE_STATUS",
             "Only submitted releases can be rejected",
@@ -670,7 +811,7 @@ async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         );
     }
     let timestamp = now();
-    store::run(&db(&ctx)?,"UPDATE releases SET status='rejected',review_message=?1,reviewed_at=?2,reviewed_by=?3 WHERE release_id=?4",&[store::value(input.message.trim()),store::value(timestamp),store::value(&actor),store::value(release_id)]).await?;
+    store::run(&db(&ctx)?,"UPDATE releases SET review_status='rejected',publish_status='draft',review_message=?1,reviewed_at=?2,reviewed_by=?3 WHERE release_id=?4",&[store::value(input.message.trim()),store::value(timestamp),store::value(&actor),store::value(release_id)]).await?;
     store::audit(
         &db(&ctx)?,
         Some(&actor),
@@ -696,26 +837,10 @@ async fn admin_download(req: Request, ctx: RouteContext<()>) -> Result<Response>
     let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
     };
-    let key = value_str(&release, "package_key").unwrap_or("");
-    let Some(object) = ctx.env.bucket("PACKAGES")?.get(key).execute().await? else {
-        return error("PACKAGE_NOT_FOUND", "Package object not found", 404);
-    };
-    let Some(body) = object.body() else {
-        return error("PACKAGE_NOT_FOUND", "Package body not found", 404);
-    };
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/octet-stream")?;
-    headers.set(
-        "Content-Disposition",
-        &format!(
-            "attachment; filename=\"{}-{}.pkg\"",
-            value_str(&release, "bundle_id").unwrap_or("app"),
-            value_str(&release, "version").unwrap_or("release")
-        ),
-    )?;
-    headers.set("Content-Length", &object.size().to_string())?;
-    headers.set("Cache-Control", "no-store")?;
-    Ok(Response::from_body(body.response_body()?)?.with_headers(headers))
+    redirect_to(
+        value_str(&release, "download_url").unwrap_or(""),
+        "no-store",
+    )
 }
 
 async fn public_key(_: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -921,9 +1046,9 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             list_developer_releases,
         )
         .post_async("/v1/developer/apps/:bundle_id/releases", create_release)
-        .put_async("/v1/developer/releases/:release_id/package", upload_package)
-        .post_async("/v1/developer/releases/:release_id/submit", submit_release)
         .get_async("/v1/admin/releases", admin_releases)
+        .get_async("/v1/admin/releases/:release_id", admin_release)
+        .post_async("/v1/admin/releases/:release_id/validate", validate_release)
         .post_async("/v1/admin/releases/:release_id/approve", approve_release)
         .post_async("/v1/admin/releases/:release_id/reject", reject_release)
         .get_async("/v1/admin/releases/:release_id/download", admin_download)
@@ -965,7 +1090,44 @@ mod tests {
         assert!(!valid_version("1/2"));
     }
     #[test]
-    fn package_limit_is_bounded() {
+    fn mpkg_limit_is_bounded() {
         assert_eq!(MAX_PACKAGE_BYTES, 134_217_728);
+    }
+
+    #[test]
+    fn accepts_only_fixed_github_release_download_urls() {
+        assert!(
+            github_download_url(
+                "https://github.com/mochiOS/example/releases/download/v1.0.0/example.mpkg"
+            )
+            .is_some()
+        );
+        assert!(github_download_url("https://example.com/releases/download/v1/app.mpkg").is_none());
+        assert!(
+            github_download_url("https://github.com/mochiOS/example/releases/latest").is_none()
+        );
+        assert!(
+            github_download_url("https://user@github.com/a/b/releases/download/v1/a.mpkg")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_github_ids_outside_javascript_integer_range() {
+        assert_eq!(
+            js_integer(MAX_SAFE_JS_INTEGER),
+            Some(MAX_SAFE_JS_INTEGER as f64)
+        );
+        assert_eq!(js_integer(MAX_SAFE_JS_INTEGER + 1), None);
+    }
+
+    #[test]
+    fn accepts_only_owner_repository_pairs() {
+        assert_eq!(
+            github_repository("mochiOS/TextEditor"),
+            Some(("mochiOS", "TextEditor"))
+        );
+        assert!(github_repository("TextEditor").is_none());
+        assert!(github_repository("owner/repo/extra").is_none());
     }
 }

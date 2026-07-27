@@ -78,12 +78,19 @@ pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<Publi
 }
 
 pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
-    rows(db,
-        "SELECT release_id, bundle_id, version, package_size AS size, package_sha256 AS sha256,
-                changelog, status, '/v1/apps/' || bundle_id || '/download?version=' || version AS download_url,
-                created_at
-           FROM releases WHERE bundle_id=?1 AND status='published' ORDER BY published_at DESC",
-        &[value(bundle_id)]).await
+    rows(
+        db,
+        "SELECT release_id, bundle_id, version, file_size AS size, sha256,
+                changelog, review_status, publish_status, download_url,
+                github_repository, github_release_tag, github_asset_id, asset_name,
+                developer_certificate_id, minimum_mochios_version, created_at
+           FROM releases
+          WHERE bundle_id=?1 AND review_status='approved' AND publish_status='published'
+            AND download_url IS NOT NULL AND sha256 IS NOT NULL AND signature IS NOT NULL
+          ORDER BY published_at DESC",
+        &[value(bundle_id)],
+    )
+    .await
 }
 
 pub async fn developer_apps(db: &D1Database, developer_id: &str) -> Result<Vec<Value>> {
@@ -106,16 +113,6 @@ pub async fn developer_app(
         &[value(developer_id), value(bundle_id)],
     )
     .await
-}
-
-pub async fn owned_release(
-    db: &D1Database,
-    developer_id: &str,
-    release_id: &str,
-) -> Result<Option<Value>> {
-    first(db,
-        "SELECT r.* FROM releases r JOIN apps a ON a.bundle_id=r.bundle_id WHERE a.developer_id=?1 AND r.release_id=?2 LIMIT 1",
-        &[value(developer_id), value(release_id)]).await
 }
 
 pub async fn release_by_id(db: &D1Database, release_id: &str) -> Result<Option<Value>> {

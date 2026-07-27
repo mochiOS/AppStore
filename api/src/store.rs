@@ -8,6 +8,10 @@ pub fn value(value: impl Into<JsValue>) -> JsValue {
     value.into()
 }
 
+pub fn number(value: i64) -> JsValue {
+    JsValue::from_f64(value as f64)
+}
+
 pub async fn rows<T: DeserializeOwned>(
     db: &D1Database,
     sql: &str,
@@ -61,8 +65,8 @@ pub async fn public_apps(
             kind.map_or(JsValue::NULL, value),
             category.map_or(JsValue::NULL, value),
             query.map_or(JsValue::NULL, value),
-            value(limit),
-            value(offset),
+            number(limit),
+            number(offset),
         ],
     )
     .await
@@ -135,7 +139,7 @@ pub async fn audit(
 ) -> Result<()> {
     run(db,
         "INSERT INTO audit_logs (audit_id,actor_id,action,target_type,target_id,metadata_json,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        &[value(format!("audit_{}", uuid::Uuid::now_v7().simple())), actor.map_or(JsValue::NULL, value), value(action), value(target_type), value(target_id), value(metadata.to_string()), value(now)]).await
+        &[value(format!("audit_{}", uuid::Uuid::now_v7().simple())), actor.map_or(JsValue::NULL, value), value(action), value(target_type), value(target_id), value(metadata.to_string()), number(now)]).await
 }
 
 pub async fn storefront(db: &D1Database) -> Result<Value> {

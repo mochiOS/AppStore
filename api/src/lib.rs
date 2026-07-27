@@ -331,7 +331,7 @@ async fn bundle_ids(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if !valid_bundle_id(input.bundle_id.trim()) || input.app_name.trim().is_empty() {
         return error("VALIDATION_ERROR", "bundle_id or app_name is invalid", 422);
     }
-    let result = store::run(&db(&ctx)?, "INSERT INTO bundle_ids(bundle_id,developer_id,app_name,status,created_at) VALUES(?1,?2,?3,'reserved',?4)", &[store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.app_name.trim()),store::value(now())]).await;
+    let result = store::run(&db(&ctx)?, "INSERT INTO bundle_ids(bundle_id,developer_id,app_name,status,created_at) VALUES(?1,?2,?3,'reserved',?4)", &[store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.app_name.trim()),store::number(now())]).await;
     if result.is_err() {
         return error("BUNDLE_ID_ALREADY_EXISTS", "Bundle ID already exists", 409);
     }
@@ -379,7 +379,7 @@ async fn developer_apps(req: Request, ctx: RouteContext<()>) -> Result<Response>
     let timestamp = now();
     let result = store::run(&db(&ctx)?,
         "INSERT INTO apps(app_id,bundle_id,developer_id,display_name,subtitle,description,icon_url,category,kind,price_label,age_rating,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)",
-        &[store::value(&app_id),store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.display_name.trim()),input.subtitle.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(input.description.trim()),input.icon_url.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),input.category.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(&input.kind),store::value(&input.price_label),input.age_rating.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(timestamp)]).await;
+        &[store::value(&app_id),store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.display_name.trim()),input.subtitle.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(input.description.trim()),input.icon_url.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),input.category.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(&input.kind),store::value(&input.price_label),input.age_rating.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::number(timestamp)]).await;
     if result.is_err() {
         return error("APP_ALREADY_EXISTS", "App already exists", 409);
     }
@@ -531,7 +531,7 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
                 .as_deref()
                 .map_or(worker::wasm_bindgen::JsValue::NULL, store::value),
             store::value(&developer),
-            store::value(timestamp),
+            store::number(timestamp),
         ],
     )
     .await;
@@ -671,7 +671,7 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             store::value(&sha256),
             store::value(&manifest_hash),
             store::value(input.signature.trim()),
-            store::value(timestamp),
+            store::number(timestamp),
             store::value(&actor),
             store::value(release_id),
         ],
@@ -721,8 +721,8 @@ async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response>
         &sql,
         &[
             store::value(value),
-            store::value(limit),
-            store::value(offset),
+            store::number(limit),
+            store::number(offset),
         ],
     )
     .await?;
@@ -761,13 +761,13 @@ async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response
         );
     }
     let timestamp = now();
-    store::run(&db(&ctx)?,"UPDATE releases SET review_status='approved',publish_status='published',review_message=NULL,reviewed_at=?1,reviewed_by=?2,published_at=?1 WHERE release_id=?3",&[store::value(timestamp),store::value(&actor),store::value(release_id)]).await?;
+    store::run(&db(&ctx)?,"UPDATE releases SET review_status='approved',publish_status='published',review_message=NULL,reviewed_at=?1,reviewed_by=?2,published_at=?1 WHERE release_id=?3",&[store::number(timestamp),store::value(&actor),store::value(release_id)]).await?;
     store::run(
         &db(&ctx)?,
         "UPDATE apps SET latest_version=?1,visibility='public',updated_at=?2 WHERE bundle_id=?3",
         &[
             store::value(value_str(&release, "version").unwrap_or("")),
-            store::value(timestamp),
+            store::number(timestamp),
             store::value(value_str(&release, "bundle_id").unwrap_or("")),
         ],
     )
@@ -811,7 +811,7 @@ async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         );
     }
     let timestamp = now();
-    store::run(&db(&ctx)?,"UPDATE releases SET review_status='rejected',publish_status='draft',review_message=?1,reviewed_at=?2,reviewed_by=?3 WHERE release_id=?4",&[store::value(input.message.trim()),store::value(timestamp),store::value(&actor),store::value(release_id)]).await?;
+    store::run(&db(&ctx)?,"UPDATE releases SET review_status='rejected',publish_status='draft',review_message=?1,reviewed_at=?2,reviewed_by=?3 WHERE release_id=?4",&[store::value(input.message.trim()),store::number(timestamp),store::value(&actor),store::value(release_id)]).await?;
     store::audit(
         &db(&ctx)?,
         Some(&actor),
@@ -878,7 +878,7 @@ async fn keys(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     {
         return error("VALIDATION_ERROR", "Key metadata is invalid", 422);
     }
-    let result=store::run(&db(&ctx)?,"INSERT INTO public_keys(key_id,developer_id,public_key,fingerprint,created_at) VALUES(?1,?2,?3,?4,?5)",&[store::value(input.key_id.trim()),store::value(&developer),store::value(input.public_key.trim()),store::value(input.fingerprint.trim()),store::value(now())]).await;
+    let result=store::run(&db(&ctx)?,"INSERT INTO public_keys(key_id,developer_id,public_key,fingerprint,created_at) VALUES(?1,?2,?3,?4,?5)",&[store::value(input.key_id.trim()),store::value(&developer),store::value(input.public_key.trim()),store::value(input.fingerprint.trim()),store::number(now())]).await;
     if result.is_err() {
         return error("KEY_ALREADY_EXISTS", "Public key already exists", 409);
     }
@@ -891,7 +891,7 @@ async fn revoke_key(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         Err(r) => return Ok(r),
     };
     let key_id = param(&ctx, "key_id");
-    store::run(&db(&ctx)?,"UPDATE public_keys SET revoked_at=?1 WHERE key_id=?2 AND developer_id=?3 AND revoked_at IS NULL",&[store::value(now()),store::value(key_id),store::value(&developer)]).await?;
+    store::run(&db(&ctx)?,"UPDATE public_keys SET revoked_at=?1 WHERE key_id=?2 AND developer_id=?3 AND revoked_at IS NULL",&[store::number(now()),store::value(key_id),store::value(&developer)]).await?;
     let key: Option<Value> = store::first(
         &db(&ctx)?,
         "SELECT * FROM public_keys WHERE key_id=?1 AND developer_id=?2",
@@ -927,7 +927,7 @@ async fn teams(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
             store::value(input.name.trim()),
             store::value(input.slug.trim()),
             store::value(&developer),
-            store::value(timestamp),
+            store::number(timestamp),
         ],
     )
     .await?;
@@ -937,7 +937,7 @@ async fn teams(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
         &[
             store::value(&team_id),
             store::value(&developer),
-            store::value(timestamp),
+            store::number(timestamp),
         ],
     )
     .await?;
@@ -978,7 +978,7 @@ async fn team_members(mut req: Request, ctx: RouteContext<()>) -> Result<Respons
     if !valid_role(&input.role) {
         return error("VALIDATION_ERROR", "role is invalid", 422);
     }
-    store::run(&db(&ctx)?,"INSERT INTO team_members(team_id,developer_id,role,joined_at) VALUES(?1,?2,?3,?4) ON CONFLICT(team_id,developer_id) DO UPDATE SET role=excluded.role",&[store::value(team_id),store::value(&input.developer_id),store::value(&input.role),store::value(now())]).await?;
+    store::run(&db(&ctx)?,"INSERT INTO team_members(team_id,developer_id,role,joined_at) VALUES(?1,?2,?3,?4) ON CONFLICT(team_id,developer_id) DO UPDATE SET role=excluded.role",&[store::value(team_id),store::value(&input.developer_id),store::value(&input.role),store::number(now())]).await?;
     json_response(&json!({"member":input}), 201)
 }
 
@@ -1009,7 +1009,7 @@ async fn assign_team(mut req: Request, ctx: RouteContext<()>) -> Result<Response
                 .team_id
                 .as_deref()
                 .map_or(worker::wasm_bindgen::JsValue::NULL, store::value),
-            store::value(now()),
+            store::number(now()),
             store::value(bundle_id),
             store::value(&developer),
         ],

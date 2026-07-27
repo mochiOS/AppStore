@@ -1,2 +1,10 @@
 data/
 .idea/
+node_modules/
+.next/
+.open-next/
+.wrangler/
+cloudflare-env.d.ts
+*.tsbuildinfo
+.env*
+!.env.example

@@ -1,46 +1,71 @@
-# mochiOS AppStore
+# mochiOS App Store
 
-mochiOS向けアプリの登録、Package upload、Release審査、公開カタログ、Package配布を
-担当するサービスです。現在の実装はPHPとSQLiteで動作します。
+`store.mochios.org` で公開するmochiOS向けApp Storeです。フロントエンドはNext.js、Cloudflare上の実行環境はOpenNextとWorkersを使用します。
 
-## サービス分離
+## 実装済み
 
-認証とAccount状態は`Accounts`、Developer／Member／審査／Certificate／失効は
-`DeveloperCA`へ移管しました。AppStoreから次の旧実装を削除しています。
+- API駆動の「見つける」ストアフロント
+- 特集、ランキング、横スクロール棚、カテゴリ
+- アプリ／ゲーム一覧
+- 公開カタログ検索
+- 評価、スクリーンショットを含むアプリ詳細
+- Release一覧とダウンロード
+- アプリアイコン画像の表示
+- デスクトップ／モバイル対応
+- Cloudflare Workers向けOpenNext設定
 
-- GitHub OAuthとOAuth Identity保存
-- OAuthログイン時のDeveloper自動作成
-- Developer審査
-- CSR受付、CA署名、Certificate発行・失効
-- Root CA秘密鍵設定とCA API
+画面上のアプリ情報はモックデータを使用しません。`APPSTORE_API_BASE_URL`で指定した公開カタログAPIの応答だけを表示します。
 
-AppStoreはDeveloper IDをアプリの所有者IDとして保持しますが、Developer自体の
-正本は保持しません。現在残っているPHP sessionと公開鍵registryは、AppStore固有の
-管理画面・Package署名フローを維持するための暫定境界です。Accounts／DeveloperCAとの
-本統合後に置換します。詳細は[サービス境界](docs/service-boundaries.md)を参照してください。
+## API設定
 
-## 主な機能
+開発時は公開カタログAPIの`/v1`を指定します。
 
-- 公開アプリカタログ、検索、Package download
-- Bundle ID予約とアプリ登録
-- `.pkg` upload、検査、署名検証
-- Release作成、提出、審査、公開
-- AppStore内チームと管理者によるRelease管理
-
-## ローカル実行
-
-`config/app.example.php`を参考に`config/app.php`を作成し、migrationを実行します。
-
-```sh
-php src/cli/migrate.php
-php -S localhost:3001 src/api/router.php
+```powershell
+$env:APPSTORE_API_BASE_URL='http://127.0.0.1:8080/v1'
+npm run dev
 ```
 
-テスト:
+APIが未設定、到達できない、または公開アプリが0件の場合は、画面確認用の`ExampleApplication`を1件だけ表示します。実データが1件でも存在すれば表示しません。
 
-```sh
-php src/tests/run.php
+期待するAPI:
+
+```text
+GET /apps
+GET /apps/{bundle_id}
+GET /search?q={query}
+GET /storefront
 ```
 
-Package形式は[アプリバンドル仕様](docs/appbundle.md)、APIは
-[`src/api/v1/list.yaml`](src/api/v1/list.yaml)を参照してください。
+アプリアイコンはAPIレスポンスの`icon`で指定します。フロントエンド側で絵文字や生成画像へ置き換えません。
+特集やストア棚も固定文言を置かず、`/storefront`の応答だけで構成します。詳しい応答形式は[docs/storefront-api.md](docs/storefront-api.md)を参照してください。
+
+## ローカル開発
+
+```powershell
+npm install
+npm run dev
+```
+
+Cloudflare Workersと同じ実行環境で確認する場合:
+
+```powershell
+npm run preview
+```
+
+## 検証
+
+```powershell
+npm run lint
+npx tsc --noEmit
+npm run build
+npx opennextjs-cloudflare build
+npx wrangler deploy --dry-run
+```
+
+## 公開
+
+```powershell
+npm run deploy
+```
+
+Custom Domainは`store.mochios.org`です。

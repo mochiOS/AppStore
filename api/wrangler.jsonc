@@ -17,6 +17,7 @@
     {
       "binding": "DB",
       "database_name": "mochios-app-store",
+      "database_id": "9b36ae65-d387-4fd6-85f3-d37a75db6eac",
       "migrations_dir": "migrations"
     }
   ],

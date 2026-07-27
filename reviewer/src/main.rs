@@ -102,7 +102,7 @@ fn main() -> Result<()> {
             expected_file_size: release.file_size,
         },
     )?;
-    let validation_url = format!("{release_url}/validation");
+    let validation_url = format!("{release_url}/validate");
     checked(
         client
             .post(validation_url)

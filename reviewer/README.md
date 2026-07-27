@@ -18,7 +18,7 @@ cargo run --release --manifest-path reviewer/Cargo.toml -- <release_id>
 cargo run --manifest-path reviewer/Cargo.toml -- <release_id> --api http://127.0.0.1:8787
 ```
 
-成功するとReleaseは`validation_status=valid`、`review_status=submitted`になります。公開は別途、管理APIの`POST /v1/admin/releases/{release_id}/approve`で行います。
+成功するとReleaseは`validation_status=valid`、`review_status=submitted`になります。その後、審査担当者が[mochiOS Console](https://console.mochios.org/#reviews)でmetadata、hash、署名情報、アプリ内容を確認し、承認または却下します。`ADMIN_TOKEN`をブラウザーへ渡したり、管理APIをブラウザーから直接呼び出したりしません。
 
 ## 検証
 
@@ -27,4 +27,3 @@ cargo fmt --manifest-path reviewer/Cargo.toml -- --check
 cargo clippy --manifest-path reviewer/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path reviewer/Cargo.toml
 ```
-

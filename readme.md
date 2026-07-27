@@ -9,7 +9,7 @@
 - アプリ／ゲーム一覧
 - 公開カタログ検索
 - 評価、スクリーンショットを含むアプリ詳細
-- Release一覧とダウンロード
+- GitHub Releases上の固定`.mpkg` assetを使うRelease一覧と直接ダウンロード
 - アプリアイコン画像の表示
 - デスクトップ／モバイル対応
 - Cloudflare Workers向けOpenNext設定
@@ -18,7 +18,7 @@
 
 ## API設定
 
-APIは`api/`にあります。メタデータはD1、Package本体はR2へ保存し、Developer認証とCertificate確認にはDeveloperCAのService Bindingを使用します。
+APIは`api/`にあります。D1にはRelease metadata、SHA-256、署名、審査状態だけを保存し、`.mpkg`本体はGitHub Releasesから配布します。Developer認証とCertificate確認にはAccounts／DeveloperCAのService Bindingを使用します。
 
 ```powershell
 npm run api:check
@@ -69,12 +69,17 @@ npx tsc --noEmit
 npm run build
 npx opennextjs-cloudflare build
 npx wrangler deploy --dry-run
+npm run reviewer:check
+npm run reviewer:test
 ```
+
+MPKG形式と署名対象は[docs/appbundle.md](docs/appbundle.md)、審査ツールは[reviewer/README.md](reviewer/README.md)を参照してください。
 
 ## 公開
 
 ```powershell
 npx wrangler secret put ADMIN_TOKEN --config api/wrangler.jsonc
+npx wrangler secret put APPSTORE_SERVICE_TOKEN --config api/wrangler.jsonc
 npm run api:migrate:remote
 npm run api:deploy
 npm run deploy

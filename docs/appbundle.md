@@ -1,200 +1,103 @@
-# mochiOS アプリパッケージの仕様
+# mochiOS MPKG仕様
 
 ## 概要
 
-mochiOSではアプリケーションを`.pkg`形式で配布する。
+mochiOSアプリは`.mpkg`で配布します。`.mpkg`はgzip圧縮されたtarアーカイブです。AppStoreは本体を保存せず、固定したGitHub Release assetの場所、外側のSHA-256、Developer Certificate署名、審査状態だけを保持します。
 
-`.pkg`はgzip圧縮されたtarアーカイブ（tar.gz）であり、インストール時にシステムによって展開される。
+## 必須構造
 
-インストール後のアプリケーションは`.app`ディレクトリとして`/applications`配下に配置される。
-
-## パッケージ形式
-
-#### 拡張子
-.pkg
-
-#### 圧縮形式
-tar.gz
-
-#### パッケージ構造
-
-パッケージ内にはアプリケーションに必要なファイルを格納する。
-
-例:
-
-```txt
-Binder.pkg
+```text
+ExampleApplication.mpkg
 ├─ about.toml
 ├─ entry.elf
 ├─ assets/
 │  └─ icon.png
-└─ ...
+└─ META/
+   ├─ manifest.toml
+   └─ signature.toml
 ```
 
-パッケージのルートには最低限以下のファイルが存在しなければならない。
-
-```txt
-about.toml
-{entry}.elf
-```
-
-## インストール後の構造
-
-インストール後は以下のような構造となる。
-
-```txt
-/applications/
-└─ Binder.app/
-   ├─ about.toml
-   ├─ entry.elf
-   ├─ assets/
-   │  └─ icon.png
-   └─ ...
-```
-
-`.app` ディレクトリはアプリケーション単位で管理される。
+アーカイブには通常ファイルとディレクトリだけを格納できます。絶対パス、`..`、重複パス、シンボリックリンク、ハードリンク、デバイス、FIFOは拒否されます。
 
 ## about.toml
 
-`about.toml` はアプリケーションのメタデータを定義するファイルである。
-
-## 必須項目
-
-| キー | 型 | 説明 |
-|--------|--------|--------|
-| name | string | アプリ名 |
-| bundle_id | string | アプリを識別する一意なID |
-| version | string | バージョン |
-| developer | string | 開発者名 |
-| entry | string | 起動するELFファイル |
-| description | string | アプリ説明 |
-| icon | string | アイコン画像 |
-
-## 任意項目
-
-| キー | 型 | 説明 |
-|--------|--------|--------|
-| resources | array<string> | リソース一覧 |
-
-## 記述例
+既存mochiOSアプリとの互換性のため、アプリ識別子のキーは`bundle_id`です。AppStore APIの`package_id`と同じ値でなければなりません。
 
 ```toml
-name = "Binder"
-bundle_id = "com.mochi.binder"
-version = "0.1.0"
-developer = "tas0dev"
+name = "ExampleApplication"
+bundle_id = "org.mochios.example"
+version = "1.0.0"
+developer = "Example Developer"
 entry = "entry.elf"
-description = "Binder is a Finder-like file manager app"
+description = "Example application"
 icon = "assets/icon.png"
-
-resources = [
-    "assets/icon.png"
-]
+resources = ["assets/icon.png"]
 ```
 
-## bundle_id
+`entry`は`.elf`で終わり、`entry`、`icon`、`resources`の各ファイルがパッケージ内に存在する必要があります。
 
-`bundle_id`はシステム内で一意でなければならない。
+## META/manifest.toml
 
-推奨形式:
+manifestは署名対象となる正本です。`META/manifest.toml`と`META/signature.toml`を除く、すべての通常ファイルを重複なく列挙します。記載のないファイルや余分なファイルが1つでもあれば拒否されます。
 
-```txt
-com.company.application
+```toml
+format_version = 1
+package_id = "org.mochios.example"
+version = "1.0.0"
+minimum_mochios_version = "0.1.0"
+
+[[files]]
+path = "about.toml"
+size = 250
+sha256 = "<about.toml raw bytesのSHA-256 hex>"
+
+[[files]]
+path = "entry.elf"
+size = 123456
+sha256 = "<entry.elf raw bytesのSHA-256 hex>"
+
+[[files]]
+path = "assets/icon.png"
+size = 4096
+sha256 = "<icon.png raw bytesのSHA-256 hex>"
 ```
 
-例:
+## META/signature.toml
 
-```txt
-com.mochi.binder
-com.mochi.settings
-dev.taso.editor
-org.example.game
+Developer秘密鍵は、`META/manifest.toml`のraw bytesから計算したSHA-256の32 bytesをEd25519で署名します。署名ファイルはパッケージ内へ含めます。
+
+```toml
+format_version = 1
+algorithm = "ed25519"
+certificate_id = "<Developer Certificate UUID>"
+manifest_sha256 = "<META/manifest.toml raw bytesのSHA-256 hex>"
+signature = "<Ed25519署名のBase64>"
 ```
 
-## アプリ起動
+外側の`.mpkg` SHA-256を埋め込み署名の対象にはしません。署名自身を含むファイルのhashを署名対象にすると自己参照になり、パッケージを生成できないためです。
 
-アプリケーション起動時の処理は以下の通り。
+## 2つの検証値
 
-1. about.toml を読み込む
-2. entryを取得する
-3. ELFをロードする
-4. プロセスを生成する
-5. 実行開始
+- `.mpkg` SHA-256: 審査時に取得したアーカイブと、インストール時に取得したアーカイブが同一であることを保証します。
+- manifest署名: manifestがDeveloper Certificateに対応する秘密鍵で署名され、manifestに列挙された内容が改変されていないことを保証します。
 
-## インストール処理
+GitHubに置かれていること自体は信頼の根拠にしません。クライアントはダウンロード後に外側のSHA-256、manifestの全ファイルhash、Developer Certificate署名、Certificateの有効期限・失効・Package ID scopeをfail closedで検証します。
 
-パッケージインストール時は以下を行う。
+## GitHub Releases
 
-1. .pkg を展開
-2. about.tomlを読み込む
-3. 必須項目を検証
-4. entry.elfの存在確認
-5. entry.elfを署名確認
-6. /applications/<name>.appを作成
-7. ファイルをコピー
-8. アプリ一覧を更新
+使用するURLは特定タグとasset名を指す固定URLだけです。
 
-## アップデート
+```text
+https://github.com/example/texteditor/releases/download/v1.2.0/texteditor-1.2.0-x86_64.mpkg
+```
 
-既に同じ `bundle_id` のアプリが存在する場合はアップデートとして扱う。
+`releases/latest/download/...`は使用しません。AppStore登録後にassetが削除・差し替えられた場合、外側のSHA-256が一致しないためインストールを拒否します。
 
-旧:
-com.mochi.binder
-version 0.1.0
+## 審査時の上限
 
-新:
-com.mochi.binder
-version 0.2.0
+- 圧縮済み`.mpkg`: 128 MiB
+- 展開後の合計: 512 MiB
+- entry数: 10,000
+- `about.toml`、manifest、signature: 各1 MiB
 
-既存のアプリを新しい内容へ置き換える。
-
-## アンインストール
-
-アンインストール時は対象の `.app` ディレクトリを削除し、lib/AppService/以下の対応するディレクトリを削除する
-
-## セキュリティ
-
-パッケージ展開時には以下を禁止する。
-
-- ディレクトリトラバーサル
-- シンボリックリンク
-- ハードリンク
-- デバイスファイル
-
-## 署名検証
-
-mochiOS はインストール時に以下を検証する想定である。
-
-1. パッケージの `sha256` を再計算する
-2. release metadata に含まれる署名を検証する
-3. 発行元証明書がストアの CA によって署名されているか確認する
-4. `bundle_id` が証明書の所有範囲に含まれるか確認する
-5. 証明書や開発者が失効済みでないか確認する
-
-オフライン時は、事前に同期した root CA / certificate / revocation 情報のみを使って既知の release を検証する。
-
-## ストア連携
-
-ストアは`about.toml`を読み取り、アプリ情報として利用する。
-
-ストアは release metadata に `package_hash`、`signature`、`certificate_id` などの検証材料を含める。
-
-hash名は以下の意味で扱う。
-
-- `package_sha256`: アップロードされた `.pkg` raw bytes の SHA-256
-- `content_hash`: `META/signature.toml` を除外した canonical content hash
-- `manifest_hash`: `manifest.toml` raw bytes の SHA-256
-- `package_hash`: 後方互換のため残る既存名。現状は `content_hash` と同じ意味として扱う
-
-## 予定
-
-将来的に以下の機能を追加可能とする。
-
-- パッケージ署名
-- SHA-256検証
-- 依存関係管理
-- 権限管理
-- 自動アップデート
-- 多言語対応
-- スクリーンショット
-- ストア評価機能
+審査ツールはアーカイブをファイルシステムへ展開せず、ストリームとして走査します。

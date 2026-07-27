@@ -1,16 +1,19 @@
 # Rust APIへの移行
 
-旧PHP APIの責務は`api/`のCloudflare Workerへ移しました。
+旧PHP APIの責務は`api/`の`workers-rs` Workerへ移行済みです。Package保存は廃止し、GitHub Releasesを配布元に変更しました。
 
-| 旧構成 | Rust版 |
+| 旧構成 | 現在の構成 |
 |---|---|
 | PHP Router | `workers-rs` Router |
-| PDO + SQLite | D1 binding + prepared statement |
-| ローカルPackageStorage | R2 binding |
-| PHP session | Accounts Bearer token + DeveloperCA Service Binding |
-| 一括multipart upload | JSON Release作成 + R2 streaming PUT |
-| PHP CLIによる審査 | 管理API + `ADMIN_TOKEN` |
+| PDO + SQLite | D1 + prepared statement |
+| AppStore内の認証 | Accounts Bearer token |
+| AppStore内のDeveloper／証明書 | DeveloperCA Service Binding |
+| R2へのPackage upload | GitHub Release assetの固定metadata |
+| R2からの配布 | mochiOSクライアントからGitHubへ直接接続 |
+| PHP Package審査 | ネイティブRust MPKG reviewer |
 
-Packageを一括展開する旧`PackageInspectService`は移植していません。Workersで大容量tar.gzをメモリ展開すると安全な上限を維持できないためです。Rust版ではクライアントが算出したPackage SHA-256をR2のchecksum機能で照合し、そのhashへのEd25519署名をDeveloperCAが発行したactive Certificateの公開鍵で検証します。Package内容の詳細検査を追加する場合は、R2イベントからQueue/Workflowへ渡す非同期検査Workerとして実装してください。
+旧R2 Releaseはmigration時に`invalid`、`rejected`、`revoked`へ変更され、公開されません。GitHub Releaseとして再登録し、再審査してください。
 
-旧SQLiteデータは自動移行されません。D1へ取り込む場合は旧DBをJSONまたはSQLへexportし、新schemaへ変換したうえで`wrangler d1 execute --remote --file`を使用します。Packageファイルは対応する`package_key`へR2へ移してください。
+AppStoreはGitHub OAuth tokenを保持しません。登録時のリポジトリ権限とasset確認はAccountsの内部APIへ委譲し、Accountsが暗号化保管したOAuth grantを必要なときだけ復号します。
+
+審査ツールは`.mpkg`を一時ファイルへ取得しますが、AppStore WorkerやD1には保存しません。検証後にD1へ保存するのはSHA-256、manifest hash、署名、Certificate ID、審査・公開状態だけです。

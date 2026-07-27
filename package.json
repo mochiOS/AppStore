@@ -14,7 +14,9 @@
     "api:dev": "cd api && wrangler dev",
     "api:migrate:local": "wrangler d1 migrations apply mochios-app-store --local --config api/wrangler.jsonc",
     "api:migrate:remote": "wrangler d1 migrations apply mochios-app-store --remote --config api/wrangler.jsonc",
-    "api:deploy": "cd api && wrangler deploy"
+    "api:deploy": "cd api && wrangler deploy",
+    "reviewer:check": "cargo check --manifest-path reviewer/Cargo.toml",
+    "reviewer:test": "cargo test --manifest-path reviewer/Cargo.toml"
   },
   "dependencies": {
     "next": "16.2.12",

@@ -1,0 +1,158 @@
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+use worker::{D1Database, Result, wasm_bindgen::JsValue};
+
+use crate::model::{PublicApp, ReleaseView};
+
+pub fn value(value: impl Into<JsValue>) -> JsValue {
+    value.into()
+}
+
+pub async fn rows<T: DeserializeOwned>(
+    db: &D1Database,
+    sql: &str,
+    params: &[JsValue],
+) -> Result<Vec<T>> {
+    db.prepare(sql).bind(params)?.all().await?.results::<T>()
+}
+
+pub async fn first<T: DeserializeOwned>(
+    db: &D1Database,
+    sql: &str,
+    params: &[JsValue],
+) -> Result<Option<T>> {
+    db.prepare(sql).bind(params)?.first::<T>(None).await
+}
+
+pub async fn run(db: &D1Database, sql: &str, params: &[JsValue]) -> Result<()> {
+    db.prepare(sql).bind(params)?.run().await?;
+    Ok(())
+}
+
+const PUBLIC_APP_SELECT: &str =
+    "SELECT a.bundle_id, a.display_name AS name, COALESCE(a.latest_version, '') AS version,
+            a.developer_id AS developer, a.description, a.icon_url AS icon, a.subtitle,
+            a.category, a.kind, a.price_label, a.age_rating,
+            CASE WHEN COALESCE(r.rating_count, 0) > 0
+                 THEN CAST(r.rating_sum AS REAL) / r.rating_count ELSE NULL END AS rating,
+            COALESCE(r.rating_count, 0) AS rating_count
+       FROM apps a LEFT JOIN ratings r ON r.bundle_id = a.bundle_id";
+
+pub async fn public_apps(
+    db: &D1Database,
+    kind: Option<&str>,
+    category: Option<&str>,
+    query: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<PublicApp>> {
+    let sql = format!(
+        "{PUBLIC_APP_SELECT}
+          WHERE a.visibility='public'
+            AND (?1 IS NULL OR a.kind=?1)
+            AND (?2 IS NULL OR a.category=?2)
+            AND (?3 IS NULL OR a.display_name LIKE '%' || ?3 || '%' OR a.description LIKE '%' || ?3 || '%' OR a.developer_id LIKE '%' || ?3 || '%')
+          ORDER BY a.updated_at DESC LIMIT ?4 OFFSET ?5"
+    );
+    rows(
+        db,
+        &sql,
+        &[
+            kind.map_or(JsValue::NULL, value),
+            category.map_or(JsValue::NULL, value),
+            query.map_or(JsValue::NULL, value),
+            value(limit),
+            value(offset),
+        ],
+    )
+    .await
+}
+
+pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<PublicApp>> {
+    first(
+        db,
+        &format!("{PUBLIC_APP_SELECT} WHERE a.visibility='public' AND a.bundle_id=?1 LIMIT 1"),
+        &[value(bundle_id)],
+    )
+    .await
+}
+
+pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
+    rows(db,
+        "SELECT release_id, bundle_id, version, package_size AS size, package_sha256 AS sha256,
+                changelog, status, '/v1/apps/' || bundle_id || '/download?version=' || version AS download_url,
+                created_at
+           FROM releases WHERE bundle_id=?1 AND status='published' ORDER BY published_at DESC",
+        &[value(bundle_id)]).await
+}
+
+pub async fn developer_apps(db: &D1Database, developer_id: &str) -> Result<Vec<Value>> {
+    rows(
+        db,
+        "SELECT * FROM apps WHERE developer_id=?1 ORDER BY created_at DESC",
+        &[value(developer_id)],
+    )
+    .await
+}
+
+pub async fn developer_app(
+    db: &D1Database,
+    developer_id: &str,
+    bundle_id: &str,
+) -> Result<Option<Value>> {
+    first(
+        db,
+        "SELECT * FROM apps WHERE developer_id=?1 AND bundle_id=?2 LIMIT 1",
+        &[value(developer_id), value(bundle_id)],
+    )
+    .await
+}
+
+pub async fn owned_release(
+    db: &D1Database,
+    developer_id: &str,
+    release_id: &str,
+) -> Result<Option<Value>> {
+    first(db,
+        "SELECT r.* FROM releases r JOIN apps a ON a.bundle_id=r.bundle_id WHERE a.developer_id=?1 AND r.release_id=?2 LIMIT 1",
+        &[value(developer_id), value(release_id)]).await
+}
+
+pub async fn release_by_id(db: &D1Database, release_id: &str) -> Result<Option<Value>> {
+    first(
+        db,
+        "SELECT * FROM releases WHERE release_id=?1 LIMIT 1",
+        &[value(release_id)],
+    )
+    .await
+}
+
+pub async fn audit(
+    db: &D1Database,
+    actor: Option<&str>,
+    action: &str,
+    target_type: &str,
+    target_id: &str,
+    metadata: Value,
+    now: i64,
+) -> Result<()> {
+    run(db,
+        "INSERT INTO audit_logs (audit_id,actor_id,action,target_type,target_id,metadata_json,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        &[value(format!("audit_{}", uuid::Uuid::now_v7().simple())), actor.map_or(JsValue::NULL, value), value(action), value(target_type), value(target_id), value(metadata.to_string()), value(now)]).await
+}
+
+pub async fn storefront(db: &D1Database) -> Result<Value> {
+    let apps = public_apps(db, Some("app"), None, None, 12, 0).await?;
+    let games = public_apps(db, Some("game"), None, None, 12, 0).await?;
+    let categories: Vec<Value> = rows(db,
+        "SELECT lower(replace(category, ' ', '-')) AS slug, category AS name, NULL AS artwork FROM apps WHERE visibility='public' AND category IS NOT NULL GROUP BY category ORDER BY category",
+        &[]).await?;
+    let mut sections = Vec::new();
+    if !apps.is_empty() {
+        sections.push(json!({"id":"apps","title":"アプリ","layout":"row","apps":apps}));
+    }
+    if !games.is_empty() {
+        sections.push(json!({"id":"games","title":"ゲーム","layout":"row","apps":games}));
+    }
+    Ok(json!({"featured":[],"sections":sections,"categories":categories}))
+}

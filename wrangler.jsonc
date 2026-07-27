@@ -4,6 +4,9 @@
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-07-27",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "APPSTORE_API_BASE_URL": "https://api.store.mochios.org/v1"
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"

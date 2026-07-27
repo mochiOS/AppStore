@@ -1,0 +1,26 @@
+[package]
+name = "mochios-app-store-api"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base64 = "0.22"
+ed25519-dalek = "2"
+hex = "0.4"
+getrandom = { version = "0.4", features = ["wasm_js"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+subtle = "2"
+uuid = { version = "1", features = ["v7", "serde", "rng-getrandom"] }
+worker = { version = "0.8.5", features = ["d1"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

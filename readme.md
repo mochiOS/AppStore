@@ -1,6 +1,6 @@
 # mochiOS App Store
 
-`store.mochios.org` で公開するmochiOS向けApp Storeです。フロントエンドはNext.js、Cloudflare上の実行環境はOpenNextとWorkersを使用します。
+`store.mochios.org`で公開するmochiOS向けApp Storeです。フロントエンドはNext.js + OpenNext、APIはRust + `workers-rs`で実装し、どちらもCloudflare WorkersへWranglerで公開します。
 
 ## 実装済み
 
@@ -18,10 +18,19 @@
 
 ## API設定
 
-開発時は公開カタログAPIの`/v1`を指定します。
+APIは`api/`にあります。メタデータはD1、Package本体はR2へ保存し、Developer認証とCertificate確認にはDeveloperCAのService Bindingを使用します。
 
 ```powershell
-$env:APPSTORE_API_BASE_URL='http://127.0.0.1:8080/v1'
+npm run api:check
+npm run api:test
+npm run api:migrate:local
+npm run api:dev
+```
+
+別ターミナルでフロントエンドを起動します。
+
+```powershell
+$env:APPSTORE_API_BASE_URL='http://127.0.0.1:8787/v1'
 npm run dev
 ```
 
@@ -65,7 +74,10 @@ npx wrangler deploy --dry-run
 ## 公開
 
 ```powershell
+npx wrangler secret put ADMIN_TOKEN --config api/wrangler.jsonc
+npm run api:migrate:remote
+npm run api:deploy
 npm run deploy
 ```
 
-Custom Domainは`store.mochios.org`です。
+Custom Domainはフロントエンドが`store.mochios.org`、APIが`api.store.mochios.org`です。詳細は[api/README.md](api/README.md)を参照してください。

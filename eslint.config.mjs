@@ -12,5 +12,5 @@ export default defineConfig([
       "@next/next/no-img-element": "off",
     },
   },
-  globalIgnores([".next/**", ".open-next/**", "src/**", "cloudflare-env.d.ts"]),
+  globalIgnores([".next/**", ".open-next/**", "api/build/**", "api/target/**", "cloudflare-env.d.ts"]),
 ]);

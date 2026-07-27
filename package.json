@@ -8,7 +8,13 @@
     "lint": "eslint .",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "api:check": "cargo check --manifest-path api/Cargo.toml --target wasm32-unknown-unknown",
+    "api:test": "cargo test --manifest-path api/Cargo.toml --lib",
+    "api:dev": "cd api && wrangler dev",
+    "api:migrate:local": "wrangler d1 migrations apply mochios-app-store --local --config api/wrangler.jsonc",
+    "api:migrate:remote": "wrangler d1 migrations apply mochios-app-store --remote --config api/wrangler.jsonc",
+    "api:deploy": "cd api && wrangler deploy"
   },
   "dependencies": {
     "next": "16.2.12",

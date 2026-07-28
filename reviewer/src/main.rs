@@ -7,9 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
-use mochios_mpkg_reviewer::{
-    Expectations, MAX_PACKAGE_BYTES, decode_root_public_keys, inspect_mpkg,
-};
+use mochios_mpkg_reviewer::{Expectations, MAX_PACKAGE_BYTES, inspect_mpkg};
 use reqwest::{
     Url,
     blocking::{Client, Response},
@@ -41,6 +39,10 @@ struct Release {
     download_url: String,
     developer_certificate_id: String,
     developer_certificate_serial: String,
+    developer_certificate_subject_key_id: String,
+    developer_certificate_developer_id: String,
+    developer_certificate_issuer_key_id: String,
+    developer_certificate_issuer_public_key: String,
     developer_public_key: String,
     minimum_mochios_version: String,
     validation_status: String,
@@ -53,11 +55,6 @@ fn main() -> Result<()> {
     let token = env::var("APPSTORE_ADMIN_TOKEN").context("APPSTORE_ADMIN_TOKEN is required")?;
     let account_id =
         env::var("APPSTORE_ADMIN_ACCOUNT_ID").context("APPSTORE_ADMIN_ACCOUNT_ID is required")?;
-    let root_public_keys = decode_root_public_keys(
-        &env::var("MOCHIOS_ROOT_PUBLIC_KEYS_HEX")
-            .or_else(|_| env::var("MOCHIOS_ROOT_PUBLIC_KEY_HEX"))
-            .context("MOCHIOS_ROOT_PUBLIC_KEYS_HEX is required")?,
-    )?;
     let unix_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let api = validated_api_origin(&args.api)?;
     let client = Client::builder()
@@ -78,6 +75,13 @@ fn main() -> Result<()> {
     .json()
     .context("AppStore returned an invalid release response")?;
     let release = release.release;
+    let issuer_public_key: [u8; 32] = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        release.developer_certificate_issuer_public_key.trim(),
+    )
+    .context("registered certificate issuer public key is not Base64")?
+    .try_into()
+    .map_err(|_| anyhow::anyhow!("registered certificate issuer public key must be 32 bytes"))?;
     ensure!(
         release.validation_status == "pending"
             && release.review_status == "pending"
@@ -107,10 +111,13 @@ fn main() -> Result<()> {
             version: &release.version,
             certificate_id: &release.developer_certificate_id,
             certificate_serial: &release.developer_certificate_serial,
+            certificate_subject_key_id: &release.developer_certificate_subject_key_id,
+            certificate_developer_id: &release.developer_certificate_developer_id,
+            certificate_issuer_key_id: &release.developer_certificate_issuer_key_id,
             minimum_mochios_version: &release.minimum_mochios_version,
             public_key: &release.developer_public_key,
+            issuer_public_key: &issuer_public_key,
             expected_file_size: release.file_size,
-            root_public_keys: &root_public_keys,
             unix_time,
         },
     )?;

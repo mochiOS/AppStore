@@ -38,10 +38,13 @@ pub struct Expectations<'a> {
     pub version: &'a str,
     pub certificate_id: &'a str,
     pub certificate_serial: &'a str,
+    pub certificate_subject_key_id: &'a str,
+    pub certificate_developer_id: &'a str,
+    pub certificate_issuer_key_id: &'a str,
     pub minimum_mochios_version: &'a str,
     pub public_key: &'a str,
+    pub issuer_public_key: &'a [u8; 32],
     pub expected_file_size: u64,
-    pub root_public_keys: &'a [[u8; 32]],
     pub unix_time: u64,
 }
 
@@ -55,6 +58,9 @@ pub struct ValidationReport {
     pub signature: String,
     pub certificate_id: String,
     pub certificate_serial: String,
+    pub certificate_subject_key_id: String,
+    pub certificate_developer_id: String,
+    pub certificate_issuer_key_id: String,
     pub minimum_mochios_version: String,
 }
 
@@ -94,13 +100,16 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
 
     let certificate = DeveloperCertificate::decode(certificate_bytes)
         .map_err(|error| anyhow::anyhow!("developer.cert is invalid: {error}"))?;
-    let root = expected
-        .root_public_keys
-        .iter()
-        .find(|root| key_id(root) == certificate.issuer_key_id)
-        .context("developer.cert issuer is not a trusted Root")?;
+    ensure!(
+        key_id(expected.issuer_public_key) == certificate.issuer_key_id,
+        "embedded Developer Certificate issuer differs from the trusted DeveloperCA issuer"
+    );
+    ensure!(
+        hex::encode(certificate.issuer_key_id) == expected.certificate_issuer_key_id,
+        "embedded Developer Certificate issuer key ID differs from registered certificate"
+    );
     certificate
-        .verify(root, expected.unix_time, package_id)
+        .verify(expected.issuer_public_key, expected.unix_time, package_id)
         .map_err(|error| anyhow::anyhow!("developer.cert verification failed: {error}"))?;
     ensure!(
         certificate.serial_number.to_string() == expected.certificate_serial,
@@ -112,6 +121,14 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
     ensure!(
         expected_public_key == certificate.subject_public_key,
         "embedded Developer Certificate differs from registered certificate"
+    );
+    ensure!(
+        hex::encode(certificate.subject_key_id) == expected.certificate_subject_key_id,
+        "embedded Developer Certificate Subject Key ID differs from registered certificate"
+    );
+    ensure!(
+        certificate.developer_id == expected.certificate_developer_id,
+        "embedded Developer Certificate Developer ID differs from registered certificate"
     );
     verify_manifest_signature(&certificate, manifest_bytes, signature_bytes)?;
     validate_capabilities(&manifest, &certificate)?;
@@ -126,6 +143,9 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
         signature: STANDARD.encode(signature_bytes),
         certificate_id: expected.certificate_id.into(),
         certificate_serial: expected.certificate_serial.into(),
+        certificate_subject_key_id: expected.certificate_subject_key_id.into(),
+        certificate_developer_id: expected.certificate_developer_id.into(),
+        certificate_issuer_key_id: expected.certificate_issuer_key_id.into(),
         minimum_mochios_version: expected.minimum_mochios_version.into(),
     })
 }
@@ -607,22 +627,102 @@ mod tests {
         bytes.extend_from_slice(&tar);
         let mut package = NamedTempFile::new().unwrap();
         package.write_all(&bytes).unwrap();
-        let report = inspect_mpkg(
-            package.path(),
-            &Expectations {
-                package_id: "org.mochios.example",
-                version: "1.0.0",
-                certificate_id: "cert_test",
-                certificate_serial: &certificate.serial_number.to_string(),
-                minimum_mochios_version: "0.1.0",
-                public_key: &STANDARD.encode(developer.verifying_key().to_bytes()),
-                expected_file_size: bytes.len() as u64,
-                root_public_keys: &[root.verifying_key().to_bytes()],
-                unix_time: 150,
-            },
+        let serial = certificate.serial_number.to_string();
+        let subject_key_id = hex::encode(certificate.subject_key_id);
+        let developer_id = certificate.developer_id.clone();
+        let issuer_key_id = hex::encode(certificate.issuer_key_id);
+        let public_key = STANDARD.encode(developer.verifying_key().to_bytes());
+        let issuer_public_key = root.verifying_key().to_bytes();
+        let inspect_with = |serial_value: &str,
+                            subject_value: &str,
+                            developer_value: &str,
+                            issuer_value: &str,
+                            issuer_key: &[u8; 32],
+                            unix_time: u64| {
+            inspect_mpkg(
+                package.path(),
+                &Expectations {
+                    package_id: "org.mochios.example",
+                    version: "1.0.0",
+                    certificate_id: "cert_test",
+                    certificate_serial: serial_value,
+                    certificate_subject_key_id: subject_value,
+                    certificate_developer_id: developer_value,
+                    certificate_issuer_key_id: issuer_value,
+                    minimum_mochios_version: "0.1.0",
+                    public_key: &public_key,
+                    issuer_public_key: issuer_key,
+                    expected_file_size: bytes.len() as u64,
+                    unix_time,
+                },
+            )
+        };
+        let report = inspect_with(
+            &serial,
+            &subject_key_id,
+            &developer_id,
+            &issuer_key_id,
+            &issuer_public_key,
+            150,
         )
         .unwrap();
         assert_eq!(report.package_id, "org.mochios.example");
+        assert!(
+            inspect_with(
+                "10",
+                &subject_key_id,
+                &developer_id,
+                &issuer_key_id,
+                &issuer_public_key,
+                150,
+            )
+            .is_err()
+        );
+        assert!(
+            inspect_with(
+                &serial,
+                &"00".repeat(32),
+                &developer_id,
+                &issuer_key_id,
+                &issuer_public_key,
+                150,
+            )
+            .is_err()
+        );
+        assert!(
+            inspect_with(
+                &serial,
+                &subject_key_id,
+                "org.mochios.developer.other",
+                &issuer_key_id,
+                &issuer_public_key,
+                150,
+            )
+            .is_err()
+        );
+        let unknown_issuer = SigningKey::from_bytes(&[8; 32]).verifying_key().to_bytes();
+        assert!(
+            inspect_with(
+                &serial,
+                &subject_key_id,
+                &developer_id,
+                &issuer_key_id,
+                &unknown_issuer,
+                150,
+            )
+            .is_err()
+        );
+        assert!(
+            inspect_with(
+                &serial,
+                &subject_key_id,
+                &developer_id,
+                &issuer_key_id,
+                &issuer_public_key,
+                201,
+            )
+            .is_err()
+        );
     }
 
     #[test]

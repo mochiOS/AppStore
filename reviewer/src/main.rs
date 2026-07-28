@@ -2,12 +2,14 @@ use std::{
     env,
     fs::File,
     io::{Read, copy},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
-use mochios_mpkg_reviewer::{Expectations, MAX_PACKAGE_BYTES, inspect_mpkg};
+use mochios_mpkg_reviewer::{
+    Expectations, MAX_PACKAGE_BYTES, decode_root_public_keys, inspect_mpkg,
+};
 use reqwest::{
     Url,
     blocking::{Client, Response},
@@ -38,6 +40,7 @@ struct Release {
     file_size: u64,
     download_url: String,
     developer_certificate_id: String,
+    developer_certificate_serial: String,
     developer_public_key: String,
     minimum_mochios_version: String,
     validation_status: String,
@@ -50,6 +53,12 @@ fn main() -> Result<()> {
     let token = env::var("APPSTORE_ADMIN_TOKEN").context("APPSTORE_ADMIN_TOKEN is required")?;
     let account_id =
         env::var("APPSTORE_ADMIN_ACCOUNT_ID").context("APPSTORE_ADMIN_ACCOUNT_ID is required")?;
+    let root_public_keys = decode_root_public_keys(
+        &env::var("MOCHIOS_ROOT_PUBLIC_KEYS_HEX")
+            .or_else(|_| env::var("MOCHIOS_ROOT_PUBLIC_KEY_HEX"))
+            .context("MOCHIOS_ROOT_PUBLIC_KEYS_HEX is required")?,
+    )?;
+    let unix_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let api = validated_api_origin(&args.api)?;
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(15))
@@ -97,9 +106,12 @@ fn main() -> Result<()> {
             package_id: &release.bundle_id,
             version: &release.version,
             certificate_id: &release.developer_certificate_id,
+            certificate_serial: &release.developer_certificate_serial,
             minimum_mochios_version: &release.minimum_mochios_version,
             public_key: &release.developer_public_key,
             expected_file_size: release.file_size,
+            root_public_keys: &root_public_keys,
+            unix_time,
         },
     )?;
     let validation_url = format!("{release_url}/validate");

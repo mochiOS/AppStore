@@ -41,12 +41,17 @@ pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<String
     Ok((response.status_code() == 200).then_some(developer_id))
 }
 
-pub async fn certificate_public_key(
+pub struct CertificateIdentity {
+    pub public_key: String,
+    pub serial_number: String,
+}
+
+pub async fn certificate_identity(
     req: &Request,
     env: &worker::Env,
     certificate_id: &str,
     developer_id: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<CertificateIdentity>> {
     let Some(headers) = authorization_headers(req)? else {
         return Ok(None);
     };
@@ -62,18 +67,20 @@ pub async fn certificate_public_key(
     }
     let value: serde_json::Value = response.json().await?;
     let valid = value.get("status").and_then(|v| v.as_str()) == Some("active")
-        && value
-            .pointer("/certificate/content/developer_id")
-            .and_then(|v| v.as_str())
-            == Some(developer_id);
-    Ok(valid
-        .then(|| {
-            value
-                .pointer("/certificate/content/subject_public_key")
-                .and_then(|v| v.as_str())
-                .map(str::to_owned)
-        })
-        .flatten())
+        && value.get("developer_id").and_then(|v| v.as_str()) == Some(developer_id);
+    let public_key = value
+        .pointer("/certificate/content/subject_public_key")
+        .and_then(|v| v.as_str());
+    let serial_number = value
+        .pointer("/certificate/content/serial_number")
+        .and_then(|v| v.as_str());
+    Ok(match (valid, public_key, serial_number) {
+        (true, Some(public_key), Some(serial_number)) => Some(CertificateIdentity {
+            public_key: public_key.to_owned(),
+            serial_number: serial_number.to_owned(),
+        }),
+        _ => None,
+    })
 }
 
 pub async fn certificate_is_valid(env: &worker::Env, certificate_id: &str) -> Result<bool> {

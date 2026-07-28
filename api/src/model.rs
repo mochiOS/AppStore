@@ -87,6 +87,7 @@ pub struct ValidationInput {
     pub manifest_hash: String,
     pub signature: String,
     pub certificate_id: String,
+    pub certificate_serial: String,
     pub minimum_mochios_version: String,
 }
 

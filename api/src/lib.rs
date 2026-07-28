@@ -154,7 +154,9 @@ fn valid_hash_signature(public_key: &str, signature: &str, signed_hash: &str) ->
     let Ok(hash) = hex::decode(signed_hash) else {
         return false;
     };
-    key.verify_strict(&hash, &signature).is_ok()
+    let mut message = b"mochios-mpkg-manifest-v1\0".to_vec();
+    message.extend_from_slice(&hash);
+    key.verify_strict(&message, &signature).is_ok()
 }
 
 fn js_integer(value: u64) -> Option<f64> {
@@ -442,9 +444,8 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     {
         return error("VALIDATION_ERROR", "Release metadata is invalid", 422);
     }
-    let Some(public_key) =
-        auth::certificate_public_key(&req, &ctx.env, input.certificate_id.trim(), &developer)
-            .await?
+    let Some(certificate) =
+        auth::certificate_identity(&req, &ctx.env, input.certificate_id.trim(), &developer).await?
     else {
         return error(
             "CERTIFICATE_INVALID",
@@ -501,8 +502,9 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
            github_release_id,github_release_tag,github_release_immutable,github_prerelease,
            github_asset_id,asset_name,download_url,file_size,github_digest,
            github_asset_created_at,github_asset_updated_at,developer_certificate_id,
-           developer_public_key,minimum_mochios_version,changelog,registered_by,created_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+           developer_public_key,developer_certificate_serial,minimum_mochios_version,changelog,
+           registered_by,created_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
         &[
             store::value(&release_id),
             store::value(&bundle_id),
@@ -524,7 +526,8 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             store::value(&asset.asset_created_at),
             store::value(&asset.asset_updated_at),
             store::value(input.certificate_id.trim()),
-            store::value(&public_key),
+            store::value(&certificate.public_key),
+            store::value(&certificate.serial_number),
             store::value(input.minimum_mochios_version.trim()),
             input
                 .changelog
@@ -620,6 +623,8 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         || input.version != value_str(&release, "version").unwrap_or("")
         || input.file_size != expected_size
         || input.certificate_id != value_str(&release, "developer_certificate_id").unwrap_or("")
+        || input.certificate_serial
+            != value_str(&release, "developer_certificate_serial").unwrap_or("")
         || input.minimum_mochios_version
             != value_str(&release, "minimum_mochios_version").unwrap_or("")
         || sha256.len() != 64
@@ -1078,6 +1083,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
     #[test]
     fn validates_bundle_ids() {
         assert!(valid_bundle_id("org.mochios.example"));
@@ -1129,5 +1135,24 @@ mod tests {
         );
         assert!(github_repository("TextEditor").is_none());
         assert!(github_repository("owner/repo/extra").is_none());
+    }
+
+    #[test]
+    fn verifies_the_mpkg_v1_manifest_domain_separator() {
+        let key = SigningKey::from_bytes(&[7; 32]);
+        let hash = [3; 32];
+        let mut message = b"mochios-mpkg-manifest-v1\0".to_vec();
+        message.extend_from_slice(&hash);
+        let signature = key.sign(&message);
+        assert!(valid_hash_signature(
+            &STANDARD.encode(key.verifying_key().to_bytes()),
+            &STANDARD.encode(signature.to_bytes()),
+            &hex::encode(hash),
+        ));
+        assert!(!valid_hash_signature(
+            &STANDARD.encode(key.verifying_key().to_bytes()),
+            &STANDARD.encode(key.sign(&hash).to_bytes()),
+            &hex::encode(hash),
+        ));
     }
 }

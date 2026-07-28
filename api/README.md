@@ -1,46 +1,13 @@
 # App Store API
 
-Cloudflare Workers上で動作するRust版App Store APIです。`workers-rs`、D1、Accounts／DeveloperCAへのService Bindingを使用します。アプリ本体は保存しません。
+Cloudflare Workers上で動作するRust／`workers-rs`版APIです。D1、Accounts Service Binding、Developer CA Service Bindingを使用し、アプリ本体は保存しません。
 
-## 配布構成
-
-- D1 `DB`: アプリ、GitHub Releaseの固定metadata、SHA-256、署名、審査・公開状態
-- Service Binding `ACCOUNTS`: GitHub OAuth tokenを使ったリポジトリ所有権とRelease assetの確認
-- Service Binding `DEVELOPER_CA`: Developer所属、Certificate状態、公開鍵の確認
-- Secret `APPSTORE_SERVICE_TOKEN`: AppStoreからAccounts内部APIへの認証
-- Secret `ADMIN_TOKEN`: MPKG検証・Release審査APIの認証
-
-`.mpkg`本体、GitHub OAuth token、Developer秘密鍵はAppStoreへ保存しません。
-
-## ローカル実行
-
-```powershell
-cd api
-worker-build --release --no-panic-recovery
-npx wrangler d1 migrations apply mochios-app-store --local
-npx wrangler dev
-```
-
-Developer APIは次のヘッダーを要求します。
-
-```text
-Authorization: Bearer <Accounts session token>
-X-Developer-ID: <Developer UUID>
-```
-
-管理APIは次のヘッダーを要求します。
-
-```text
-X-Admin-Token: <ADMIN_TOKEN>
-X-Admin-Account-ID: <監査ログへ記録するAccount UUID>
-```
-
-## GitHub Releaseの登録
+## Release登録
 
 ```http
 POST /v1/developer/apps/{package_id}/releases
 Authorization: Bearer <Accounts session token>
-X-Developer-ID: <Developer UUID>
+X-Developer-ID: <内部Developer UUID>
 Content-Type: application/json
 
 {
@@ -48,19 +15,37 @@ Content-Type: application/json
   "repository": "example/texteditor",
   "release_tag": "v1.2.0",
   "asset": "texteditor-1.2.0-x86_64.mpkg",
-  "certificate_id": "<Developer Certificate UUID>",
+  "certificate_id": "<Developer Certificate ID>",
   "minimum_mochios_version": "0.1.0",
   "changelog": "変更内容"
 }
 ```
 
-Accountsがログイン中のGitHubアカウントに`push`、`maintain`または`admin`権限があることを確認します。公開リポジトリ、公開済みRelease、完全一致するタグと`.mpkg` assetだけを受理します。`latest`や`releases/latest/download`は使用できません。
+Accountsがログイン中GitHub Accountの`push`／`maintain`／`admin`権限、公開済み固定tag、完全一致`.mpkg` assetを確認します。`latest`は拒否します。
 
-登録直後は`validation_status=pending`、`review_status=pending`、`publish_status=draft`です。Rust審査ツールがGitHubから一時ファイルへ直接取得し、形式・全ファイルhash・Developer署名を検証した後、管理APIへ結果を送信します。承認されるまで公開APIには現れません。
+Developer CAのstatusが有効で内部Developer IDと一致するときだけ、serial、Subject／Issuer key identity、Certificate Developer ID、発行経路をReleaseへ固定します。Reviewer reportはこれらすべてと一致しなければ受理しません。report受理時と公開承認時にもstatusを再確認します。
 
-## 公開
+## 検証状態
 
-初回のみ、Accountsと同じ値のService tokenを登録します。値をコマンドライン引数や設定ファイルへ書かないでください。
+```text
+登録: validation=pending, review=pending, publish=draft
+Reviewer成功: validation=valid, review=submitted, publish=draft
+人手承認: validation=valid, review=approved, publish=published
+```
+
+公開クライアントはAppStore APIから固定SHA-256とdownload URLを取得し、GitHub Releasesから直接MPKGを取得します。
+
+## ローカル確認
+
+```powershell
+cd api
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
+npx wrangler d1 migrations apply mochios-app-store --local
+npx wrangler dev
+```
+
+## 本番
 
 ```powershell
 npx wrangler secret put APPSTORE_SERVICE_TOKEN
@@ -69,4 +54,4 @@ npx wrangler d1 migrations apply mochios-app-store --remote
 npx wrangler deploy
 ```
 
-Custom Domainは`api.store.mochios.org`です。
+`APPSTORE_SERVICE_TOKEN`はAccounts内部API用、`ADMIN_TOKEN`はReviewer／Console審査BFF用です。Developer秘密鍵、Offline Root秘密鍵、Online Intermediate秘密鍵はAppStoreへ設定しません。

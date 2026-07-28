@@ -2,24 +2,30 @@
 
 ## Accounts
 
-人間を表すAccount、GitHub OAuth、外部Identity、Session、Account状態、認証監査を
-管理します。AppStoreはGitHub OAuth tokenやAccountsのSession DBを扱いません。
+Account、GitHub OAuth、Session、Account状態、GitHub repository権限を管理します。AppStoreへOAuth tokenを返さず、確認済みRelease asset metadataだけを返します。
 
-## DeveloperCA
+## Developer CA
 
-Developer、Developer Member、追加作成申請、審査、Developer Certificate、trust
-store、失効情報を管理します。CertificateはAccount IDではなくDeveloper IDへ結び付きます。
+Developer、Member、Certificate、Online Intermediate、Root署名Trust Snapshot、Issuer Registry、失効状態の正本です。AppStoreはCertificateを発行・失効しません。
+
+Release登録時、AppStore APIはDeveloper CA statusから次を固定保存します。
+
+```text
+certificate_id
+serial
+subject public key
+subject key ID
+certificate developer ID
+issuer public key
+issuer key ID
+issuance source
+internal Developer record ID
+```
 
 ## AppStore
 
-アプリ、Bundle ID、Release metadata、SHA-256、署名情報、公開カタログ、審査状態を管理します。`.mpkg`本体は保持せず、公開済みGitHub Release assetへmochiOSクライアントを直接案内します。
+App、Bundle ID、GitHub Release固定metadata、SHA-256、Certificate identity、審査・公開状態をD1へ保存します。`.mpkg`本体、Developer秘密鍵、GitHub OAuth tokenは保存しません。
 
-## 現在の統合状態
+ReviewerがMPKG内MCERと保存済みidentityを暗号学的に照合します。AppStore APIはReviewer report受理時と公開承認直前にDeveloper CA statusへ再照会し、失効、Developer停止、Issuer失効、metadata変化をfail closedで拒否します。
 
-AppStore APIはRust版Cloudflare Workerへ移行済みです。OAuth、Account、Developer、審査、Certificate発行・失効の正本は保持しません。
-
-Developer向けAPIはAccountsのBearer session tokenと`X-Developer-ID`を受け取り、DeveloperCAのService Bindingへ照会します。`X-Developer-ID`だけでは認証しません。Release作成時はDeveloperCAへCertificateを、Accountsへログイン中GitHubアカウントのリポジトリ権限と固定Release assetを照会します。
-
-Accountsだけが暗号化したGitHub OAuth grantを保持します。AppStoreへtokenを返さず、確認済みmetadataだけを返します。DeveloperCAはGitHubやPackageを扱いません。
-
-AppStoreが保持する`public_keys`は後方互換用metadataであり、DeveloperやCertificateの正本ではありません。新しい署名フローでは`certificate_id`を必須とし、審査時と公開時にDeveloperCAへ状態を再照会します。
+既存Root直署名CertificateはDeveloper CAの`legacy_root`検証を通じて継続利用できます。新規一般発行の`online_intermediate`も同じReviewer経路を通り、特別なbypassはありません。

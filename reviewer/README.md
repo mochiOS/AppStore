@@ -1,32 +1,41 @@
-# MPKG reviewer
+# MPKG Reviewer
 
-GitHub Releases上の`.mpkg`を一時ファイルへ取得し、安全性と署名を検証してAppStore管理APIへ報告するネイティブRustツールです。パッケージは展開・インストール・実行しません。
+GitHub Releases上の`.mpkg`を一時ファイルへ取得し、展開・実行せずに検証してAppStore管理APIへ報告するネイティブRustツールです。
 
 ## 実行
 
-管理tokenは引数へ渡さず、環境変数から読み込みます。
-
 ```powershell
-$env:APPSTORE_ADMIN_TOKEN='<ADMIN_TOKEN>'
+$env:APPSTORE_ADMIN_TOKEN='<AppStore API ADMIN_TOKEN>'
 $env:APPSTORE_ADMIN_ACCOUNT_ID='<監査ログ用Account UUID>'
-$env:MOCHIOS_ROOT_PUBLIC_KEYS_HEX='<Root公開鍵hex。複数の場合はカンマ区切り>'
 cargo run --release --manifest-path reviewer/Cargo.toml -- <release_id>
 ```
 
-ローカルAPIに対して実行する場合:
+ローカルAPI:
 
 ```powershell
 cargo run --manifest-path reviewer/Cargo.toml -- <release_id> --api http://127.0.0.1:8787
 ```
 
-成功するとReleaseは`validation_status=valid`、`review_status=submitted`になります。その後、審査担当者が[mochiOS Console](https://console.mochios.org/#reviews)でmetadata、hash、署名情報、アプリ内容を確認し、承認または却下します。`ADMIN_TOKEN`をブラウザーへ渡したり、管理APIをブラウザーから直接呼び出したりしません。
+ReviewerはRelease登録時にDeveloper CAが検証して固定したCertificate identityをAppStore APIから取得します。MPKG内MCERについて次を照合します。
 
-ReviewerはMPKG v1 header、非圧縮ustar、manifestの全payload、raw MCER v1、Root直署名、Certificate serial／subject公開鍵、manifest署名、Package ID scope、Capabilityを検証します。
+- Certificate IDに対応するserial
+- Subject public keyとSubject Key ID
+- Certificate Developer ID
+- Issuer public keyとIssuer Key ID
+- MCER署名、有効期間、package signing usage、Package ID完全一致scope
+- 全`[[binary]].requires`がallowed Capability内
+- `manifest.sig`
+- payload size／SHA-256、未知payload拒否
+- MPKG v1 header、無圧縮ustar、entry type、重複・path traversal・未知signature拒否
+
+Issuer公開鍵はDeveloper CAがOffline Root署名Trust Snapshotまたはlegacy Root経路で検証した値です。Reviewerはその公開鍵でMCER署名を再検証し、AppStore APIはreport受理時と公開承認時にDeveloper CA statusを再照会します。未登録、不一致、失効、期限切れCertificateは拒否されます。
+
+成功後、Releaseは`validation_status=valid`、`review_status=submitted`になります。審査担当者は[Console](https://console.mochios.org/#reviews)で最終承認または却下します。
 
 ## 検証
 
 ```powershell
 cargo fmt --manifest-path reviewer/Cargo.toml -- --check
-cargo clippy --manifest-path reviewer/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path reviewer/Cargo.toml
+cargo clippy --manifest-path reviewer/Cargo.toml --all-targets -- -D warnings
 ```

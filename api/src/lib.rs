@@ -159,6 +159,23 @@ fn valid_hash_signature(public_key: &str, signature: &str, signed_hash: &str) ->
     key.verify_strict(&message, &signature).is_ok()
 }
 
+fn certificate_matches_release(identity: &auth::CertificateIdentity, release: &Value) -> bool {
+    identity.public_key == value_str(release, "developer_public_key").unwrap_or("")
+        && identity.serial_number
+            == value_str(release, "developer_certificate_serial").unwrap_or("")
+        && identity.subject_key_id
+            == value_str(release, "developer_certificate_subject_key_id").unwrap_or("")
+        && identity.developer_id
+            == value_str(release, "developer_certificate_developer_id").unwrap_or("")
+        && identity.developer_record_id == value_str(release, "registered_by").unwrap_or("")
+        && identity.issuer_key_id
+            == value_str(release, "developer_certificate_issuer_key_id").unwrap_or("")
+        && identity.issuer_public_key
+            == value_str(release, "developer_certificate_issuer_public_key").unwrap_or("")
+        && identity.issuance_source
+            == value_str(release, "developer_certificate_issuance_source").unwrap_or("")
+}
+
 fn js_integer(value: u64) -> Option<f64> {
     (value <= MAX_SAFE_JS_INTEGER).then_some(value as f64)
 }
@@ -445,7 +462,7 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         return error("VALIDATION_ERROR", "Release metadata is invalid", 422);
     }
     let Some(certificate) =
-        auth::certificate_identity(&req, &ctx.env, input.certificate_id.trim(), &developer).await?
+        auth::certificate_identity(&ctx.env, input.certificate_id.trim(), &developer).await?
     else {
         return error(
             "CERTIFICATE_INVALID",
@@ -502,9 +519,12 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
            github_release_id,github_release_tag,github_release_immutable,github_prerelease,
            github_asset_id,asset_name,download_url,file_size,github_digest,
            github_asset_created_at,github_asset_updated_at,developer_certificate_id,
-           developer_public_key,developer_certificate_serial,minimum_mochios_version,changelog,
+           developer_public_key,developer_certificate_serial,developer_certificate_subject_key_id,
+           developer_certificate_developer_id,developer_certificate_issuer_key_id,
+           developer_certificate_issuer_public_key,developer_certificate_issuance_source,
+           minimum_mochios_version,changelog,
            registered_by,created_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)",
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28)",
         &[
             store::value(&release_id),
             store::value(&bundle_id),
@@ -528,6 +548,11 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             store::value(input.certificate_id.trim()),
             store::value(&certificate.public_key),
             store::value(&certificate.serial_number),
+            store::value(&certificate.subject_key_id),
+            store::value(&certificate.developer_id),
+            store::value(&certificate.issuer_key_id),
+            store::value(&certificate.issuer_public_key),
+            store::value(&certificate.issuance_source),
             store::value(input.minimum_mochios_version.trim()),
             input
                 .changelog
@@ -625,6 +650,12 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         || input.certificate_id != value_str(&release, "developer_certificate_id").unwrap_or("")
         || input.certificate_serial
             != value_str(&release, "developer_certificate_serial").unwrap_or("")
+        || input.certificate_subject_key_id
+            != value_str(&release, "developer_certificate_subject_key_id").unwrap_or("")
+        || input.certificate_developer_id
+            != value_str(&release, "developer_certificate_developer_id").unwrap_or("")
+        || input.certificate_issuer_key_id
+            != value_str(&release, "developer_certificate_issuer_key_id").unwrap_or("")
         || input.minimum_mochios_version
             != value_str(&release, "minimum_mochios_version").unwrap_or("")
         || sha256.len() != 64
@@ -657,11 +688,24 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             422,
         );
     }
-    if !auth::certificate_is_valid(&ctx.env, input.certificate_id.trim()).await? {
+    let Some(identity) = auth::certificate_identity(
+        &ctx.env,
+        input.certificate_id.trim(),
+        value_str(&release, "registered_by").unwrap_or(""),
+    )
+    .await?
+    else {
         return error(
             "CERTIFICATE_INVALID",
             "The Developer Certificate is no longer valid",
             403,
+        );
+    };
+    if !certificate_matches_release(&identity, &release) {
+        return error(
+            "CERTIFICATE_IDENTITY_MISMATCH",
+            "Developer Certificate identity differs from the registered release",
+            422,
         );
     }
     let timestamp = now();
@@ -753,16 +797,24 @@ async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response
             409,
         );
     }
-    if !auth::certificate_is_valid(
+    let Some(identity) = auth::certificate_identity(
         &ctx.env,
         value_str(&release, "developer_certificate_id").unwrap_or(""),
+        value_str(&release, "registered_by").unwrap_or(""),
     )
     .await?
-    {
+    else {
         return error(
             "CERTIFICATE_INVALID",
             "The Developer Certificate is no longer valid",
             403,
+        );
+    };
+    if !certificate_matches_release(&identity, &release) {
+        return error(
+            "CERTIFICATE_IDENTITY_MISMATCH",
+            "Developer Certificate identity differs from the reviewed release",
+            409,
         );
     }
     let timestamp = now();
@@ -1154,5 +1206,47 @@ mod tests {
             &STANDARD.encode(key.sign(&hash).to_bytes()),
             &hex::encode(hash),
         ));
+    }
+
+    #[test]
+    fn certificate_identity_requires_every_registered_field_to_match() {
+        let identity = auth::CertificateIdentity {
+            public_key: "subject-public-key".into(),
+            serial_number: "42".into(),
+            subject_key_id: "subject-key-id".into(),
+            developer_id: "org.mochios.developer.example".into(),
+            developer_record_id: "developer-record".into(),
+            issuer_key_id: "issuer-key-id".into(),
+            issuer_public_key: "issuer-public-key".into(),
+            issuance_source: "online_intermediate".into(),
+        };
+        let release = json!({
+            "developer_public_key": identity.public_key,
+            "developer_certificate_serial": identity.serial_number,
+            "developer_certificate_subject_key_id": identity.subject_key_id,
+            "developer_certificate_developer_id": identity.developer_id,
+            "registered_by": identity.developer_record_id,
+            "developer_certificate_issuer_key_id": identity.issuer_key_id,
+            "developer_certificate_issuer_public_key": identity.issuer_public_key,
+            "developer_certificate_issuance_source": identity.issuance_source,
+        });
+        assert!(certificate_matches_release(&identity, &release));
+        for field in [
+            "developer_public_key",
+            "developer_certificate_serial",
+            "developer_certificate_subject_key_id",
+            "developer_certificate_developer_id",
+            "registered_by",
+            "developer_certificate_issuer_key_id",
+            "developer_certificate_issuer_public_key",
+            "developer_certificate_issuance_source",
+        ] {
+            let mut mismatched = release.clone();
+            mismatched[field] = json!("mismatch");
+            assert!(
+                !certificate_matches_release(&identity, &mismatched),
+                "accepted mismatched field: {field}"
+            );
+        }
     }
 }

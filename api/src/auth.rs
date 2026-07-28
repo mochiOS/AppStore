@@ -1,3 +1,5 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use worker::{Headers, Method, Request, RequestInit, Result, wasm_bindgen::JsValue};
 
@@ -44,56 +46,88 @@ pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<String
 pub struct CertificateIdentity {
     pub public_key: String,
     pub serial_number: String,
+    pub subject_key_id: String,
+    pub developer_id: String,
+    pub developer_record_id: String,
+    pub issuer_key_id: String,
+    pub issuer_public_key: String,
+    pub issuance_source: String,
 }
 
 pub async fn certificate_identity(
-    req: &Request,
     env: &worker::Env,
     certificate_id: &str,
-    developer_id: &str,
+    developer_record_id: &str,
 ) -> Result<Option<CertificateIdentity>> {
-    let Some(headers) = authorization_headers(req)? else {
-        return Ok(None);
-    };
-    let mut init = RequestInit::new();
-    init.with_method(Method::Get).with_headers(headers);
-    let request = Request::new_with_init(
-        &format!("https://developer-ca/v1/certificates/{certificate_id}"),
-        &init,
-    )?;
-    let mut response = env.service("DEVELOPER_CA")?.fetch_request(request).await?;
-    if response.status_code() != 200 {
-        return Ok(None);
-    }
-    let value: serde_json::Value = response.json().await?;
-    let valid = value.get("status").and_then(|v| v.as_str()) == Some("active")
-        && value.get("developer_id").and_then(|v| v.as_str()) == Some(developer_id);
-    let public_key = value
-        .pointer("/certificate/content/subject_public_key")
-        .and_then(|v| v.as_str());
-    let serial_number = value
-        .pointer("/certificate/content/serial_number")
-        .and_then(|v| v.as_str());
-    Ok(match (valid, public_key, serial_number) {
-        (true, Some(public_key), Some(serial_number)) => Some(CertificateIdentity {
-            public_key: public_key.to_owned(),
-            serial_number: serial_number.to_owned(),
-        }),
-        _ => None,
-    })
-}
-
-pub async fn certificate_is_valid(env: &worker::Env, certificate_id: &str) -> Result<bool> {
     let request = Request::new(
         &format!("https://developer-ca/v1/certificates/{certificate_id}/status"),
         Method::Get,
     )?;
     let mut response = env.service("DEVELOPER_CA")?.fetch_request(request).await?;
     if response.status_code() != 200 {
-        return Ok(false);
+        return Ok(None);
     }
     let value: serde_json::Value = response.json().await?;
-    Ok(value.get("valid").and_then(|value| value.as_bool()) == Some(true))
+    let string = |name: &str| value.get(name).and_then(serde_json::Value::as_str);
+    let valid = value.get("valid").and_then(serde_json::Value::as_bool) == Some(true)
+        && string("status") == Some("valid")
+        && string("developer_record_id") == Some(developer_record_id);
+    let (
+        Some(public_key),
+        Some(serial_number),
+        Some(subject_key_id),
+        Some(developer_id),
+        Some(issuer_key_id),
+        Some(issuer_public_key),
+        Some(issuance_source),
+    ) = (
+        string("subject_public_key").map(str::to_owned),
+        string("serial_number"),
+        string("subject_key_id"),
+        string("developer_id"),
+        string("issuer_key_id"),
+        string("issuer_public_key"),
+        string("issuance_source"),
+    )
+    else {
+        return Ok(None);
+    };
+    let public_key_bytes: [u8; 32] = match STANDARD
+        .decode(&public_key)
+        .ok()
+        .and_then(|bytes| bytes.try_into().ok())
+    {
+        Some(bytes) => bytes,
+        None => return Ok(None),
+    };
+    let issuer_public_key_bytes: [u8; 32] = match STANDARD
+        .decode(issuer_public_key)
+        .ok()
+        .and_then(|bytes| bytes.try_into().ok())
+    {
+        Some(bytes) => bytes,
+        None => return Ok(None),
+    };
+    let canonical_serial = serial_number
+        .parse::<u64>()
+        .ok()
+        .filter(|serial| *serial > 0)
+        .map(|serial| serial.to_string());
+    let identity_is_consistent = valid
+        && canonical_serial.as_deref() == Some(serial_number)
+        && hex::encode(Sha256::digest(public_key_bytes)) == subject_key_id
+        && hex::encode(Sha256::digest(issuer_public_key_bytes)) == issuer_key_id
+        && matches!(issuance_source, "legacy_root" | "online_intermediate");
+    Ok(identity_is_consistent.then(|| CertificateIdentity {
+        public_key,
+        serial_number: serial_number.to_owned(),
+        subject_key_id: subject_key_id.to_owned(),
+        developer_id: developer_id.to_owned(),
+        developer_record_id: developer_record_id.to_owned(),
+        issuer_key_id: issuer_key_id.to_owned(),
+        issuer_public_key: issuer_public_key.to_owned(),
+        issuance_source: issuance_source.to_owned(),
+    }))
 }
 
 pub async fn github_release_asset(

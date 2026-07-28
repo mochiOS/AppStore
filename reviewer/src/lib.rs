@@ -539,25 +539,6 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
 }
 
-pub fn decode_root_public_keys(value: &str) -> Result<Vec<[u8; 32]>> {
-    let keys = value
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            ensure!(
-                value.len() == 64,
-                "Root public keys must be 64-character hex"
-            );
-            hex::decode(value)?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Root public key must be 32 bytes"))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    ensure!(!keys.is_empty(), "at least one Root public key is required");
-    Ok(keys)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -582,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn validates_root_signed_mpkg_v1() {
+    fn validates_mpkg_with_developer_ca_trusted_issuer() {
         let payload = b"ELF fixture";
         let digest = hex::encode(Sha256::digest(payload));
         let manifest = format!(
@@ -738,6 +719,5 @@ mod tests {
             )
             .is_err()
         );
-        assert!(decode_root_public_keys("not-hex").is_err());
     }
 }

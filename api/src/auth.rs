@@ -30,7 +30,7 @@ pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<String
     let Some(headers) = authorization_headers(req)? else {
         return Ok(None);
     };
-    if developer_id.is_empty() {
+    if !mochios_certificate::is_valid_developer_id(&developer_id) {
         return Ok(None);
     }
     let mut init = RequestInit::new();
@@ -114,6 +114,8 @@ pub async fn certificate_identity(
         .filter(|serial| *serial > 0)
         .map(|serial| serial.to_string());
     let identity_is_consistent = valid
+        && mochios_certificate::is_valid_developer_id(developer_id)
+        && developer_id == developer_record_id
         && canonical_serial.as_deref() == Some(serial_number)
         && hex::encode(Sha256::digest(public_key_bytes)) == subject_key_id
         && hex::encode(Sha256::digest(issuer_public_key_bytes)) == issuer_key_id

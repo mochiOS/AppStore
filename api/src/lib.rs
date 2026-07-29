@@ -71,11 +71,7 @@ fn with_cors(mut response: Response, origin: Option<&str>) -> Result<Response> {
 }
 
 fn valid_bundle_id(value: &str) -> bool {
-    value.contains('.')
-        && value.len() <= 255
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'-'))
+    mochios_certificate::is_valid_package_id(value)
 }
 
 fn valid_version(value: &str) -> bool {
@@ -1138,9 +1134,17 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     #[test]
     fn validates_bundle_ids() {
-        assert!(valid_bundle_id("org.mochios.example"));
-        assert!(!valid_bundle_id("Example"));
-        assert!(!valid_bundle_id("../app"));
+        for valid in [
+            "org.mochios.example",
+            "com.example.paint",
+            "io.github.user.tool",
+            "dev.tas0.volume",
+        ] {
+            assert!(valid_bundle_id(valid), "rejected {valid}");
+        }
+        for invalid in ["Example", "app", "com..example", "com.-example", "../app"] {
+            assert!(!valid_bundle_id(invalid), "accepted {invalid}");
+        }
     }
     #[test]
     fn validates_versions() {
@@ -1214,8 +1218,8 @@ mod tests {
             public_key: "subject-public-key".into(),
             serial_number: "42".into(),
             subject_key_id: "subject-key-id".into(),
-            developer_id: "org.mochios.developer.example".into(),
-            developer_record_id: "developer-record".into(),
+            developer_id: "019f9e5ac6687902b0e72fe53abfbef1".into(),
+            developer_record_id: "019f9e5ac6687902b0e72fe53abfbef1".into(),
             issuer_key_id: "issuer-key-id".into(),
             issuer_public_key: "issuer-public-key".into(),
             issuance_source: "online_intermediate".into(),

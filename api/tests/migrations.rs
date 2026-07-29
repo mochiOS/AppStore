@@ -4,6 +4,7 @@ const INITIAL: &str = include_str!("../migrations/0001_initial.sql");
 const GITHUB_RELEASES: &str = include_str!("../migrations/0002_github_release_distribution.sql");
 const CERTIFICATE_SERIAL: &str = include_str!("../migrations/0003_certificate_serial.sql");
 const CERTIFICATE_IDENTITY: &str = include_str!("../migrations/0004_certificate_identity.sql");
+const UUID_DEVELOPER_IDS: &str = include_str!("../migrations/0005_uuid_developer_ids.sql");
 
 #[test]
 fn certificate_identity_migration_preserves_legacy_releases() {
@@ -13,9 +14,9 @@ fn certificate_identity_migration_preserves_legacy_releases() {
         .expect("apply initial schema");
     connection
         .execute_batch(
-            "INSERT INTO bundle_ids VALUES ('org.mochios.example','developer-1','Example','active',1);
+            "INSERT INTO bundle_ids VALUES ('org.mochios.example','019f9e5a-c668-7902-b0e7-2fe53abfbef1','Example','active',1);
              INSERT INTO apps(app_id,bundle_id,developer_id,display_name,created_at,updated_at)
-             VALUES ('app-1','org.mochios.example','developer-1','Example',1,1);
+             VALUES ('app-1','org.mochios.example','019f9e5a-c668-7902-b0e7-2fe53abfbef1','Example',1,1);
              INSERT INTO releases(
                release_id,bundle_id,version,package_key,package_size,package_sha256,
                signature,certificate_id,status,created_at)
@@ -32,6 +33,10 @@ fn certificate_identity_migration_preserves_legacy_releases() {
     connection
         .execute_batch(CERTIFICATE_IDENTITY)
         .expect("add certificate identity");
+    connection.execute("UPDATE releases SET registered_by='019f9e5a-c668-7902-b0e7-2fe53abfbef1',developer_certificate_developer_id='org.mochios.developer.019f9e5ac6687902b0e72fe53abfbef1' WHERE release_id='release-1'",[]).unwrap();
+    connection
+        .execute_batch(UUID_DEVELOPER_IDS)
+        .expect("normalize Developer IDs");
 
     let values = connection
         .query_row(
@@ -58,10 +63,24 @@ fn certificate_identity_migration_preserves_legacy_releases() {
     assert_eq!(values.0, "certificate-1");
     assert!(values.1.is_empty());
     assert!(values.2.is_empty());
-    assert!(values.3.is_empty());
+    assert_eq!(values.3, "019f9e5ac6687902b0e72fe53abfbef1");
     assert!(values.4.is_empty());
     assert!(values.5.is_empty());
     assert_eq!(values.6, "legacy_root");
+    assert_eq!(
+        connection
+            .query_row("SELECT developer_id FROM apps", [], |row| row
+                .get::<_, String>(0))
+            .unwrap(),
+        "019f9e5ac6687902b0e72fe53abfbef1"
+    );
+    assert_eq!(
+        connection
+            .query_row("SELECT registered_by FROM releases", [], |row| row
+                .get::<_, String>(0))
+            .unwrap(),
+        "019f9e5ac6687902b0e72fe53abfbef1"
+    );
     assert_eq!(
         connection
             .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))

@@ -538,6 +538,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
  "hex",
+ "mochios-certificate",
  "rusqlite",
  "serde",
  "serde_json",
@@ -545,6 +546,15 @@ dependencies = [
  "subtle",
  "uuid",
  "worker",
+]
+
+[[package]]
+name = "mochios-certificate"
+version = "0.1.0"
+source = "git+https://github.com/mochiOS/syscalls?rev=af217f5ca6a585110aabac813eb46dff8ccb7bfc#af217f5ca6a585110aabac813eb46dff8ccb7bfc"
+dependencies = [
+ "ed25519-dalek",
+ "sha2",
 ]
 
 [[package]]

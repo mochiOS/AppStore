@@ -19,7 +19,7 @@ certificate developer ID
 issuer public key
 issuer key ID
 issuance source
-internal Developer record ID
+Developer ID（MCERと同じ32桁UUIDv7本体）
 ```
 
 ## AppStore
@@ -27,5 +27,7 @@ internal Developer record ID
 App、Bundle ID、GitHub Release固定metadata、SHA-256、Certificate identity、審査・公開状態をD1へ保存します。`.mpkg`本体、Developer秘密鍵、GitHub OAuth tokenは保存しません。
 
 ReviewerがMPKG内MCERと保存済みidentityを暗号学的に照合します。AppStore APIはReviewer report受理時と公開承認直前にDeveloper CA statusへ再照会し、失効、Developer停止、Issuer失効、metadata変化をfail closedで拒否します。
+
+DeveloperCAのDeveloper ID、MCERの`developer_id`、Releaseの`registered_by`は同じ32桁UUIDv7本体でなければなりません。Package IDは特定namespaceへ限定せず、共有validatorの規則へ従います。
 
 既存Root直署名CertificateはDeveloper CAの`legacy_root`検証を通じて継続利用できます。新規一般発行の`online_intermediate`も同じReviewer経路を通り、特別なbypassはありません。

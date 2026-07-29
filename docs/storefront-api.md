@@ -39,7 +39,9 @@ App Storeの「見つける」画面は`GET /storefront`の応答から構成し
 - `chart`: 順位付きランキング
 - `grid`: 折り返しグリッド
 
-各`app`は最低限`bundle_id`、`name`、`version`、`developer`、`description`、`icon`を返します。必要に応じて以下も返せます。
+各`app`は最低限`bundle_id`、`name`、`version`、Developer表示名の`developer`、公開識別子の`developer_id`、`description`、`icon`を返します。必要に応じて以下も返せます。
+
+`GET /apps/{package_id}/releases`は固定repository、tag、Asset ID、asset名、size、Asset SHA-256、Package digest、download URLを返します。内部Account ID、審査担当者ID、監査情報は公開しません。
 
 ```json
 {

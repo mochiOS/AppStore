@@ -88,7 +88,7 @@ pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<Develo
             "owner" | "admin" | "developer"
         )
         && !envelope.membership.account_id.is_empty();
-    Ok(authorized.then(|| DeveloperActor {
+    Ok(authorized.then_some(DeveloperActor {
         developer_id,
         account_id: envelope.membership.account_id,
         display_name: envelope.developer.display_name,
@@ -234,6 +234,45 @@ pub async fn github_release_asset(
             .and_then(|value| value.as_str())
             .unwrap_or("GitHub release verification failed")
             .to_owned(),
+    }))
+}
+
+pub async fn github_release_asset_for_account(
+    env: &worker::Env,
+    account_id: &str,
+    input: &GitHubReleaseAssetRequest<'_>,
+) -> Result<std::result::Result<VerifiedGitHubReleaseAsset, ServiceError>> {
+    let headers = Headers::new();
+    headers.set(
+        "X-AppStore-Service-Token",
+        &env.secret("APPSTORE_SERVICE_TOKEN")?.to_string(),
+    )?;
+    headers.set("X-AppStore-Account-ID", account_id)?;
+    headers.set("Content-Type", "application/json")?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(JsValue::from_str(&serde_json::to_string(input)?)));
+    let request =
+        Request::new_with_init("https://accounts/v1/internal/github/release-asset", &init)?;
+    let mut response = env.service("ACCOUNTS")?.fetch_request(request).await?;
+    let status = response.status_code();
+    if status == 200 {
+        let envelope: AccountsReleaseAssetEnvelope = response.json().await?;
+        return Ok(Ok(VerifiedGitHubReleaseAsset {
+            account_id: envelope.account_id,
+            release_asset: envelope.release_asset,
+        }));
+    }
+    let value: serde_json::Value = response.json().await.unwrap_or_default();
+    Ok(Err(ServiceError {
+        status,
+        code: value
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("GITHUB_LOOKUP_FAILED")
+            .to_owned(),
+        message: "Registered GitHub release asset could not be verified".into(),
     }))
 }
 

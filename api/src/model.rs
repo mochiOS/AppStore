@@ -132,7 +132,9 @@ pub struct PayloadReport {
 
 #[derive(Debug, Deserialize)]
 pub struct RejectInput {
-    pub message: String,
+    pub reason_code: String,
+    #[serde(default)]
+    pub note: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +173,7 @@ pub struct PublicApp {
     pub name: String,
     pub version: String,
     pub developer: String,
+    pub developer_id: String,
     pub description: String,
     pub icon: Option<String>,
     pub subtitle: Option<String>,
@@ -189,6 +192,7 @@ pub struct ReleaseView {
     pub version: String,
     pub size: i64,
     pub sha256: String,
+    pub package_digest: String,
     pub changelog: Option<String>,
     pub review_status: String,
     pub publish_status: String,

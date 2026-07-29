@@ -6,6 +6,8 @@ const CERTIFICATE_SERIAL: &str = include_str!("../migrations/0003_certificate_se
 const CERTIFICATE_IDENTITY: &str = include_str!("../migrations/0004_certificate_identity.sql");
 const UUID_DEVELOPER_IDS: &str = include_str!("../migrations/0005_uuid_developer_ids.sql");
 const PACKAGE_SUSPENSIONS: &str = include_str!("../migrations/0006_package_suspensions.sql");
+const RELEASE_VALIDATION_REPORTS: &str =
+    include_str!("../migrations/0007_release_validation_reports.sql");
 
 #[test]
 fn package_suspension_is_reversible() {
@@ -49,6 +51,57 @@ fn package_suspension_is_reversible() {
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn validation_report_schema_and_audit_log_are_hardened() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    for migration in [
+        INITIAL,
+        GITHUB_RELEASES,
+        CERTIFICATE_SERIAL,
+        CERTIFICATE_IDENTITY,
+        UUID_DEVELOPER_IDS,
+        PACKAGE_SUSPENSIONS,
+        RELEASE_VALIDATION_REPORTS,
+    ] {
+        connection
+            .execute_batch(migration)
+            .expect("apply migration");
+    }
+    connection
+        .execute(
+            "INSERT INTO audit_logs VALUES('audit','account','release.validate','release','release',NULL,1)",
+            [],
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute("UPDATE audit_logs SET action='tampered'", [])
+            .is_err()
+    );
+    assert!(connection.execute("DELETE FROM audit_logs", []).is_err());
+    for column in [
+        "registered_by_account_id",
+        "developer_display_name",
+        "package_digest",
+        "capabilities_json",
+        "payloads_json",
+        "reviewer_version",
+        "validation_error_code",
+        "rejection_reason_code",
+        "withdrawn_at",
+        "last_integrity_checked_at",
+    ] {
+        let exists = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('releases') WHERE name=?1",
+                [column],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 1, "missing {column}");
+    }
 }
 
 #[test]

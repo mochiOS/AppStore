@@ -33,6 +33,29 @@ fn db(ctx: &RouteContext<()>) -> Result<D1Database> {
     ctx.env.d1("DB")
 }
 
+async fn rate_limited(
+    req: &Request,
+    env: &Env,
+    binding: &str,
+    scope: &str,
+) -> Result<Option<Response>> {
+    let client = req
+        .headers()
+        .get("CF-Connecting-IP")?
+        .unwrap_or_else(|| "unknown".into());
+    if env
+        .rate_limiter(binding)?
+        .limit(format!("{scope}:{client}"))
+        .await?
+        .success
+    {
+        return Ok(None);
+    }
+    let mut response = error("RATE_LIMITED", "Too many requests", 429)?;
+    response.headers_mut().set("Retry-After", "60")?;
+    Ok(Some(response))
+}
+
 fn json_response<T: Serialize>(value: &T, status: u16) -> Result<Response> {
     Ok(Response::from_json(value)?.with_status(status))
 }
@@ -252,6 +275,9 @@ async fn health(_: Request, _: RouteContext<()>) -> Result<Response> {
 }
 
 async fn list_apps(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "apps").await? {
+        return Ok(response);
+    }
     let url = req.url()?;
     let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
     let (limit, offset) = page(&req);
@@ -268,6 +294,9 @@ async fn list_apps(req: Request, ctx: RouteContext<()>) -> Result<Response> {
 }
 
 async fn search(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "search").await? {
+        return Ok(response);
+    }
     let url = req.url()?;
     let query = url
         .query_pairs()
@@ -283,11 +312,21 @@ async fn search(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     json_response(&json!({"query":query,"results":results}), 200)
 }
 
-async fn storefront(_: Request, ctx: RouteContext<()>) -> Result<Response> {
+async fn storefront(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "storefront").await?
+    {
+        return Ok(response);
+    }
     json_response(&store::storefront(&db(&ctx)?).await?, 200)
 }
 
-async fn app_detail(_: Request, ctx: RouteContext<()>) -> Result<Response> {
+async fn app_detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "app-detail").await?
+    {
+        return Ok(response);
+    }
     let bundle_id = param(&ctx, "bundle_id");
     let Some(app) = store::public_app(&db(&ctx)?, bundle_id).await? else {
         return error("APP_NOT_FOUND", "App not found", 404);
@@ -310,7 +349,10 @@ async fn app_detail(_: Request, ctx: RouteContext<()>) -> Result<Response> {
     json_response(&result, 200)
 }
 
-async fn app_releases(_: Request, ctx: RouteContext<()>) -> Result<Response> {
+async fn app_releases(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "releases").await? {
+        return Ok(response);
+    }
     let bundle_id = param(&ctx, "bundle_id");
     if store::public_app(&db(&ctx)?, bundle_id).await?.is_none() {
         return error("APP_NOT_FOUND", "App not found", 404);
@@ -322,6 +364,9 @@ async fn app_releases(_: Request, ctx: RouteContext<()>) -> Result<Response> {
 }
 
 async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "download").await? {
+        return Ok(response);
+    }
     let bundle_id = param(&ctx, "bundle_id");
     let version = req
         .url()?
@@ -459,6 +504,11 @@ async fn developer_app(req: Request, ctx: RouteContext<()>) -> Result<Response> 
 }
 
 async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "release-register").await?
+    {
+        return Ok(response);
+    }
     let actor = match require_developer_actor(&req, &ctx.env).await? {
         Ok(v) => v,
         Err(r) => return Ok(r),
@@ -660,6 +710,11 @@ async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> 
 }
 
 async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "REVIEWER_RATE_LIMITER", "validate").await?
+    {
+        return Ok(response);
+    }
     match require_reviewer(&req, &ctx.env)? {
         Ok(()) => {}
         Err(response) => return Ok(response),
@@ -815,6 +870,11 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
 }
 
 async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "REVIEWER_RATE_LIMITER", "invalidate").await?
+    {
+        return Ok(response);
+    }
     match require_reviewer(&req, &ctx.env)? {
         Ok(()) => {}
         Err(response) => return Ok(response),
@@ -914,6 +974,7 @@ async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response>
         "SELECT r.*,a.display_name,a.icon_url,a.description
            FROM releases r LEFT JOIN apps a ON a.bundle_id=r.bundle_id
           WHERE r.{column}=?1
+            AND (?1!='submitted' OR (r.validation_status='valid' AND r.publish_status='draft'))
           ORDER BY r.submitted_at DESC,r.created_at DESC LIMIT ?2 OFFSET ?3"
     );
     let rows: Vec<Value> = store::rows(
@@ -930,6 +991,10 @@ async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response>
 }
 
 async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "approve").await?
+    {
+        return Ok(response);
+    }
     let actor = match require_admin(&req, &ctx.env)? {
         Ok(v) => v,
         Err(r) => return Ok(r),
@@ -997,14 +1062,31 @@ async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response
 }
 
 async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "reject").await? {
+        return Ok(response);
+    }
     let actor = match require_admin(&req, &ctx.env)? {
         Ok(v) => v,
         Err(r) => return Ok(r),
     };
     let release_id = param(&ctx, "release_id");
     let input: RejectInput = req.json().await?;
-    if input.message.trim().is_empty() {
-        return error("VALIDATION_ERROR", "message is required", 422);
+    if !matches!(
+        input.reason_code.as_str(),
+        "metadata_incorrect"
+            | "misleading_description"
+            | "malicious_behavior"
+            | "policy_violation"
+            | "duplicate_application"
+            | "broken_application"
+            | "other"
+    ) || input.note.chars().count() > 2000
+    {
+        return error(
+            "VALIDATION_ERROR",
+            "rejection reason or note is invalid",
+            422,
+        );
     }
     let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
@@ -1019,14 +1101,14 @@ async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         );
     }
     let timestamp = now();
-    store::run(&db(&ctx)?,"UPDATE releases SET review_status='rejected',publish_status='draft',review_message=?1,reviewed_at=?2,reviewed_by=?3 WHERE release_id=?4",&[store::value(input.message.trim()),store::number(timestamp),store::value(&actor),store::value(release_id)]).await?;
+    store::run(&db(&ctx)?,"UPDATE releases SET review_status='rejected',publish_status='draft',review_message=?1,rejection_reason_code=?2,rejection_note=?1,reviewed_at=?3,reviewed_by=?4 WHERE release_id=?5",&[store::value(input.note.trim()),store::value(&input.reason_code),store::number(timestamp),store::value(&actor),store::value(release_id)]).await?;
     store::audit(
         &db(&ctx)?,
         Some(&actor),
         "release.reject",
         "release",
         release_id,
-        json!({}),
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"rejected","reason_code":input.reason_code}),
         timestamp,
     )
     .await?;
@@ -1345,6 +1427,223 @@ async fn assign_team(mut req: Request, ctx: RouteContext<()>) -> Result<Response
     )
 }
 
+fn release_github_identity_matches(release: &Value, asset: &GitHubReleaseAsset) -> bool {
+    release.get("github_repository_id").and_then(Value::as_u64) == Some(asset.repository_id)
+        && value_str(release, "github_repository") == Some(asset.repository.as_str())
+        && release.get("github_release_id").and_then(Value::as_u64) == Some(asset.release_id)
+        && value_str(release, "github_release_tag") == Some(asset.release_tag.as_str())
+        && release.get("github_asset_id").and_then(Value::as_u64) == Some(asset.asset_id)
+        && value_str(release, "asset_name") == Some(asset.asset_name.as_str())
+        && release.get("file_size").and_then(Value::as_u64) == Some(asset.file_size)
+        && value_str(release, "download_url") == Some(asset.download_url.as_str())
+        && value_str(release, "github_asset_created_at") == Some(asset.asset_created_at.as_str())
+        && value_str(release, "github_asset_updated_at") == Some(asset.asset_updated_at.as_str())
+        && match (
+            value_str(release, "github_digest"),
+            asset.github_digest.as_deref(),
+        ) {
+            (Some(expected), Some(actual)) => expected.eq_ignore_ascii_case(actual),
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+async fn withdraw_release(
+    env: &Env,
+    database: &D1Database,
+    release: &Value,
+    reason_code: &str,
+) -> Result<()> {
+    let release_id = value_str(release, "release_id").unwrap_or("");
+    let bundle_id = value_str(release, "bundle_id").unwrap_or("");
+    let timestamp = now();
+    store::run(
+        database,
+        "UPDATE releases SET validation_status='invalid',review_status='rejected',
+            publish_status='revoked',validation_error_code=?1,validation_message=?1,
+            withdrawn_at=?2,last_integrity_checked_at=?2
+          WHERE release_id=?3 AND publish_status='published'",
+        &[
+            store::value(reason_code),
+            store::number(timestamp),
+            store::value(release_id),
+        ],
+    )
+    .await?;
+    store::run(
+        database,
+        "UPDATE apps SET visibility='private',latest_version=NULL,updated_at=?1
+          WHERE bundle_id=?2 AND NOT EXISTS(
+            SELECT 1 FROM releases WHERE bundle_id=?2 AND validation_status='valid'
+              AND review_status='approved' AND publish_status='published')",
+        &[store::number(timestamp), store::value(bundle_id)],
+    )
+    .await?;
+    store::audit(
+        database,
+        None,
+        "release.withdraw",
+        "release",
+        release_id,
+        json!({"developer_id":value_str(release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":bundle_id,"result":"withdrawn","reason_code":reason_code}),
+        timestamp,
+    )
+    .await?;
+    console_warn!(
+        "{}",
+        json!({"message":"release withdrawn","release_id":release_id,"reason_code":reason_code,"service":"app-store-api"})
+    );
+    let _ = env;
+    Ok(())
+}
+
+async fn check_release_integrity(
+    env: &Env,
+    database: &D1Database,
+    release: &Value,
+) -> Result<bool> {
+    let Some(identity) = auth::certificate_identity(
+        env,
+        value_str(release, "developer_certificate_id").unwrap_or(""),
+        value_str(release, "registered_by").unwrap_or(""),
+    )
+    .await?
+    else {
+        withdraw_release(env, database, release, "certificate_inactive").await?;
+        return Ok(false);
+    };
+    if !certificate_matches_release(&identity, release) {
+        withdraw_release(env, database, release, "certificate_identity_changed").await?;
+        return Ok(false);
+    }
+    let Some((owner, repository)) =
+        github_repository(value_str(release, "github_repository").unwrap_or(""))
+    else {
+        withdraw_release(env, database, release, "asset_identity_invalid").await?;
+        return Ok(false);
+    };
+    let request = GitHubReleaseAssetRequest {
+        owner,
+        repository,
+        release_tag: value_str(release, "github_release_tag").unwrap_or(""),
+        asset_name: value_str(release, "asset_name").unwrap_or(""),
+    };
+    let account_id = value_str(release, "registered_by_account_id").unwrap_or("");
+    let verified = auth::github_release_asset_for_account(env, account_id, &request).await?;
+    let Ok(verified) = verified else {
+        withdraw_release(env, database, release, "github_asset_unavailable").await?;
+        return Ok(false);
+    };
+    if verified.account_id != account_id
+        || !release_github_identity_matches(release, &verified.release_asset)
+    {
+        withdraw_release(env, database, release, "github_asset_changed").await?;
+        return Ok(false);
+    }
+    store::run(
+        database,
+        "UPDATE releases SET last_integrity_checked_at=?1 WHERE release_id=?2",
+        &[
+            store::number(now()),
+            store::value(value_str(release, "release_id").unwrap_or("")),
+        ],
+    )
+    .await?;
+    Ok(true)
+}
+
+async fn integrity_check(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "integrity").await?
+    {
+        return Ok(response);
+    }
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let release_id = param(&ctx, "release_id");
+    let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
+        return error("RELEASE_NOT_FOUND", "Release not found", 404);
+    };
+    let valid = check_release_integrity(&ctx.env, &db(&ctx)?, &release).await?;
+    store::audit(
+        &db(&ctx)?,
+        Some(&actor),
+        "release.integrity_check",
+        "release",
+        release_id,
+        json!({"result":if valid {"valid"} else {"withdrawn"}}),
+        now(),
+    )
+    .await?;
+    json_response(
+        &json!({"valid":valid,"release":store::release_by_id(&db(&ctx)?,release_id).await?}),
+        200,
+    )
+}
+
+async fn request_revalidation(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "REVIEWER_RATE_LIMITER", "revalidate").await?
+    {
+        return Ok(response);
+    }
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let release_id = param(&ctx, "release_id");
+    let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
+        return error("RELEASE_NOT_FOUND", "Release not found", 404);
+    };
+    if value_str(&release, "validation_status") == Some("pending") {
+        return error(
+            "REVALIDATION_ALREADY_PENDING",
+            "Release validation is already pending",
+            409,
+        );
+    }
+    let timestamp = now();
+    store::run(
+        &db(&ctx)?,
+        "UPDATE releases SET validation_status='pending',review_status='pending',
+            publish_status='draft',sha256=NULL,package_digest=NULL,manifest_hash=NULL,
+            signature=NULL,capabilities_json=NULL,payloads_json=NULL,reviewer_version=NULL,
+            validation_error_code=NULL,validation_message=NULL,validated_at=NULL,validated_by=NULL,
+            submitted_at=NULL,reviewed_at=NULL,reviewed_by=NULL,published_at=NULL,withdrawn_at=?1
+          WHERE release_id=?2",
+        &[store::number(timestamp), store::value(release_id)],
+    )
+    .await?;
+    store::run(
+        &db(&ctx)?,
+        "UPDATE apps SET visibility='private',latest_version=NULL,updated_at=?1
+          WHERE bundle_id=?2 AND NOT EXISTS(
+            SELECT 1 FROM releases WHERE bundle_id=?2 AND validation_status='valid'
+              AND review_status='approved' AND publish_status='published')",
+        &[
+            store::number(timestamp),
+            store::value(value_str(&release, "bundle_id").unwrap_or("")),
+        ],
+    )
+    .await?;
+    store::audit(
+        &db(&ctx)?,
+        Some(&actor),
+        "release.revalidation_requested",
+        "release",
+        release_id,
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"pending"}),
+        timestamp,
+    )
+    .await?;
+    json_response(
+        &json!({"release":store::release_by_id(&db(&ctx)?,release_id).await?}),
+        200,
+    )
+}
+
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let origin = req.headers().get("Origin")?;
@@ -1379,6 +1678,14 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         )
         .post_async("/v1/admin/releases/:release_id/approve", approve_release)
         .post_async("/v1/admin/releases/:release_id/reject", reject_release)
+        .post_async(
+            "/v1/admin/releases/:release_id/integrity-check",
+            integrity_check,
+        )
+        .post_async(
+            "/v1/admin/releases/:release_id/revalidate",
+            request_revalidation,
+        )
         .get_async("/v1/admin/releases/:release_id/download", admin_download)
         .get_async("/v1/admin/packages", admin_packages)
         .post_async("/v1/admin/packages/:bundle_id/suspend", |req, ctx| {
@@ -1408,6 +1715,35 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         }
     };
     with_cors(response, origin.as_deref())
+}
+
+#[event(scheduled)]
+pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    let result: Result<()> = async {
+        let database = env.d1("DB")?;
+        let releases: Vec<Value> = store::rows(
+            &database,
+            "SELECT * FROM releases WHERE validation_status='valid'
+              AND review_status='approved' AND publish_status='published'
+              ORDER BY COALESCE(last_integrity_checked_at,0),published_at LIMIT 25",
+            &[],
+        )
+        .await?;
+        for release in releases {
+            if let Err(cause) = check_release_integrity(&env, &database, &release).await {
+                console_error!(
+                    "{}",
+                    json!({"message":"scheduled integrity check failed closed","release_id":value_str(&release,"release_id"),"error":cause.to_string()})
+                );
+                withdraw_release(&env, &database, &release, "integrity_check_failed").await?;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(cause) = result {
+        console_error!("scheduled integrity job failed: {cause}");
+    }
 }
 
 #[cfg(test)]

@@ -5,6 +5,51 @@ const GITHUB_RELEASES: &str = include_str!("../migrations/0002_github_release_di
 const CERTIFICATE_SERIAL: &str = include_str!("../migrations/0003_certificate_serial.sql");
 const CERTIFICATE_IDENTITY: &str = include_str!("../migrations/0004_certificate_identity.sql");
 const UUID_DEVELOPER_IDS: &str = include_str!("../migrations/0005_uuid_developer_ids.sql");
+const PACKAGE_SUSPENSIONS: &str = include_str!("../migrations/0006_package_suspensions.sql");
+
+#[test]
+fn package_suspension_is_reversible() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    connection.execute_batch(INITIAL).unwrap();
+    connection.execute_batch("INSERT INTO bundle_ids VALUES ('org.mochios.example','developer','Example','active',1); INSERT INTO apps(app_id,bundle_id,developer_id,display_name,created_at,updated_at) VALUES('app','org.mochios.example','developer','Example',1,1);").unwrap();
+    connection.execute_batch(PACKAGE_SUSPENSIONS).unwrap();
+    connection.execute("INSERT INTO package_suspensions(bundle_id,suspended_by_account_id,reason,suspended_at) VALUES('org.mochios.example','admin','incident',2)",[]).unwrap();
+    connection
+        .execute(
+            "UPDATE bundle_ids SET status='blocked' WHERE bundle_id='org.mochios.example'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT status FROM bundle_ids WHERE bundle_id='org.mochios.example'",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        "blocked"
+    );
+    connection
+        .execute(
+            "DELETE FROM package_suspensions WHERE bundle_id='org.mochios.example'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE bundle_ids SET status='active' WHERE bundle_id='org.mochios.example'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM package_suspensions", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
 
 #[test]
 fn certificate_identity_migration_preserves_legacy_releases() {

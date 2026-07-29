@@ -40,7 +40,8 @@ const PUBLIC_APP_SELECT: &str =
             CASE WHEN COALESCE(r.rating_count, 0) > 0
                  THEN CAST(r.rating_sum AS REAL) / r.rating_count ELSE NULL END AS rating,
             COALESCE(r.rating_count, 0) AS rating_count
-       FROM apps a LEFT JOIN ratings r ON r.bundle_id = a.bundle_id";
+       FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
+       LEFT JOIN ratings r ON r.bundle_id = a.bundle_id";
 
 pub async fn public_apps(
     db: &D1Database,
@@ -52,7 +53,7 @@ pub async fn public_apps(
 ) -> Result<Vec<PublicApp>> {
     let sql = format!(
         "{PUBLIC_APP_SELECT}
-          WHERE a.visibility='public'
+          WHERE a.visibility='public' AND b.status='active'
             AND (?1 IS NULL OR a.kind=?1)
             AND (?2 IS NULL OR a.category=?2)
             AND (?3 IS NULL OR a.display_name LIKE '%' || ?3 || '%' OR a.description LIKE '%' || ?3 || '%' OR a.developer_id LIKE '%' || ?3 || '%')
@@ -75,7 +76,7 @@ pub async fn public_apps(
 pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<PublicApp>> {
     first(
         db,
-        &format!("{PUBLIC_APP_SELECT} WHERE a.visibility='public' AND a.bundle_id=?1 LIMIT 1"),
+        &format!("{PUBLIC_APP_SELECT} WHERE a.visibility='public' AND b.status='active' AND a.bundle_id=?1 LIMIT 1"),
         &[value(bundle_id)],
     )
     .await
@@ -84,12 +85,12 @@ pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<Publi
 pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
     rows(
         db,
-        "SELECT release_id, bundle_id, version, file_size AS size, sha256,
-                changelog, review_status, publish_status, download_url,
-                github_repository, github_release_tag, github_asset_id, asset_name,
-                developer_certificate_id, minimum_mochios_version, created_at
-           FROM releases
-          WHERE bundle_id=?1 AND review_status='approved' AND publish_status='published'
+        "SELECT r.release_id, r.bundle_id, r.version, r.file_size AS size, r.sha256,
+                r.changelog, r.review_status, r.publish_status, r.download_url,
+                r.github_repository, r.github_release_tag, r.github_asset_id, r.asset_name,
+                r.developer_certificate_id, r.minimum_mochios_version, r.created_at
+           FROM releases r JOIN bundle_ids b ON b.bundle_id=r.bundle_id
+          WHERE r.bundle_id=?1 AND b.status='active' AND review_status='approved' AND publish_status='published'
             AND download_url IS NOT NULL AND sha256 IS NOT NULL AND signature IS NOT NULL
           ORDER BY published_at DESC",
         &[value(bundle_id)],
@@ -145,9 +146,15 @@ pub async fn audit(
 pub async fn storefront(db: &D1Database) -> Result<Value> {
     let apps = public_apps(db, Some("app"), None, None, 12, 0).await?;
     let games = public_apps(db, Some("game"), None, None, 12, 0).await?;
-    let categories: Vec<Value> = rows(db,
-        "SELECT lower(replace(category, ' ', '-')) AS slug, category AS name, NULL AS artwork FROM apps WHERE visibility='public' AND category IS NOT NULL GROUP BY category ORDER BY category",
-        &[]).await?;
+    let categories: Vec<Value> = rows(
+        db,
+        "SELECT lower(replace(a.category, ' ', '-')) AS slug, a.category AS name, NULL AS artwork
+         FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
+         WHERE a.visibility='public' AND b.status='active' AND a.category IS NOT NULL
+         GROUP BY a.category ORDER BY a.category",
+        &[],
+    )
+    .await?;
     let mut sections = Vec::new();
     if !apps.is_empty() {
         sections.push(json!({"id":"apps","title":"アプリ","layout":"row","apps":apps}));

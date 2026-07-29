@@ -100,6 +100,12 @@ pub struct RejectInput {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuspensionInput {
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct KeyInput {
     pub key_id: String,
     pub public_key: String,

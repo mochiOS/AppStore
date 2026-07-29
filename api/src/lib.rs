@@ -304,8 +304,8 @@ async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .map(|(_, value)| value.into_owned());
     let release: Option<Value> = store::first(
         &db(&ctx)?,
-        "SELECT download_url FROM releases
-          WHERE bundle_id=?1 AND review_status='approved' AND publish_status='published'
+        "SELECT r.download_url FROM releases r JOIN bundle_ids b ON b.bundle_id=r.bundle_id
+          WHERE r.bundle_id=?1 AND b.status='active' AND review_status='approved' AND publish_status='published'
             AND validation_status='valid' AND download_url IS NOT NULL
             AND sha256 IS NOT NULL AND signature IS NOT NULL
             AND (?2 IS NULL OR version=?2)
@@ -438,10 +438,14 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         Err(r) => return Ok(r),
     };
     let bundle_id = param(&ctx, "bundle_id").to_string();
-    if store::developer_app(&db(&ctx)?, &developer, &bundle_id)
-        .await?
-        .is_none()
-    {
+    let active_app: Option<Value> = store::first(
+        &db(&ctx)?,
+        "SELECT a.app_id FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
+         WHERE a.developer_id=?1 AND a.bundle_id=?2 AND b.status='active' LIMIT 1",
+        &[store::value(&developer), store::value(&bundle_id)],
+    )
+    .await?;
+    if active_app.is_none() {
         return error("APP_NOT_FOUND", "App not found", 404);
     }
     let input: ReleaseInput = req.json().await?;
@@ -896,6 +900,122 @@ async fn admin_download(req: Request, ctx: RouteContext<()>) -> Result<Response>
     )
 }
 
+async fn admin_packages(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let status = req
+        .url()?
+        .query_pairs()
+        .find(|(key, _)| key == "status")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_else(|| "active".into());
+    if !matches!(status.as_str(), "active" | "blocked") {
+        return error("VALIDATION_ERROR", "status is invalid", 422);
+    }
+    let rows: Vec<Value> = store::rows(
+        &db(&ctx)?,
+        "SELECT a.*, b.status AS package_status, s.reason AS suspension_reason,
+                s.suspended_by_account_id, s.suspended_at
+         FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
+         LEFT JOIN package_suspensions s ON s.bundle_id=a.bundle_id
+         WHERE b.status=?1 ORDER BY a.updated_at DESC LIMIT 100",
+        &[store::value(&status)],
+    )
+    .await?;
+    json_response(&json!({"admin":actor,"status":status,"packages":rows}), 200)
+}
+
+async fn set_package_suspension(
+    mut req: Request,
+    ctx: RouteContext<()>,
+    suspended: bool,
+) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    if !valid_bundle_id(bundle_id) {
+        return error("VALIDATION_ERROR", "bundle_id is invalid", 422);
+    }
+    let database = db(&ctx)?;
+    let app: Option<Value> = store::first(
+        &database,
+        "SELECT a.bundle_id,b.status FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id WHERE a.bundle_id=?1",
+        &[store::value(bundle_id)],
+    )
+    .await?;
+    let Some(app) = app else {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    };
+    if !matches!(value_str(&app, "status"), Some("active" | "blocked")) {
+        return error("INVALID_PACKAGE_STATUS", "Package cannot be suspended", 409);
+    }
+    let reason = if suspended {
+        let input: SuspensionInput = req.json().await?;
+        let reason = input.reason.trim().to_owned();
+        if reason.is_empty() || reason.len() > 2000 {
+            return error(
+                "SUSPENSION_REASON_REQUIRED",
+                "Suspension reason required",
+                422,
+            );
+        }
+        Some(reason)
+    } else {
+        None
+    };
+    let timestamp = now();
+    let package_status = if suspended { "blocked" } else { "active" };
+    let suspension_statement = if suspended {
+        database.prepare(
+            "INSERT INTO package_suspensions(bundle_id,suspended_by_account_id,reason,suspended_at)
+             VALUES(?1,?2,?3,?4)
+             ON CONFLICT(bundle_id) DO UPDATE SET suspended_by_account_id=excluded.suspended_by_account_id,
+             reason=excluded.reason,suspended_at=excluded.suspended_at",
+        )
+        .bind(&[
+            store::value(bundle_id),
+            store::value(&actor),
+            store::value(reason.as_deref().unwrap_or("administrative")),
+            store::number(timestamp),
+        ])?
+    } else {
+        database
+            .prepare("DELETE FROM package_suspensions WHERE bundle_id=?1")
+            .bind(&[store::value(bundle_id)])?
+    };
+    database
+        .batch(vec![
+            database
+                .prepare("UPDATE bundle_ids SET status=?1 WHERE bundle_id=?2")
+                .bind(&[store::value(package_status), store::value(bundle_id)])?,
+            suspension_statement,
+            database
+                .prepare("INSERT INTO audit_logs(audit_id,actor_id,action,target_type,target_id,metadata_json,created_at) VALUES(?1,?2,?3,'package',?4,?5,?6)")
+                .bind(&[
+                    store::value(id("audit")),
+                    store::value(&actor),
+                    store::value(if suspended { "package.suspend" } else { "package.restore" }),
+                    store::value(bundle_id),
+                    store::value(json!({"reason":reason}).to_string()),
+                    store::number(timestamp),
+                ])?,
+        ])
+        .await?;
+    let package: Option<Value> = store::first(
+        &database,
+        "SELECT a.*,b.status AS package_status,s.reason AS suspension_reason,s.suspended_at
+         FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
+         LEFT JOIN package_suspensions s ON s.bundle_id=a.bundle_id WHERE a.bundle_id=?1",
+        &[store::value(bundle_id)],
+    )
+    .await?;
+    json_response(&json!({"package":package}), 200)
+}
+
 async fn public_key(_: Request, ctx: RouteContext<()>) -> Result<Response> {
     let material = param(&ctx, "public_key");
     let key: Option<Value> = store::first(
@@ -1105,6 +1225,13 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/v1/admin/releases/:release_id/approve", approve_release)
         .post_async("/v1/admin/releases/:release_id/reject", reject_release)
         .get_async("/v1/admin/releases/:release_id/download", admin_download)
+        .get_async("/v1/admin/packages", admin_packages)
+        .post_async("/v1/admin/packages/:bundle_id/suspend", |req, ctx| {
+            set_package_suspension(req, ctx, true)
+        })
+        .post_async("/v1/admin/packages/:bundle_id/restore", |req, ctx| {
+            set_package_suspension(req, ctx, false)
+        })
         .get_async("/v1/keys", keys)
         .post_async("/v1/keys", keys)
         .post_async("/v1/keys/:key_id/revoke", revoke_key)

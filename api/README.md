@@ -57,3 +57,4 @@ npx wrangler deploy
 ```
 
 `APPSTORE_SERVICE_TOKEN`はAccounts内部API用、`ADMIN_TOKEN`はReviewer／Console審査BFF用です。Developer秘密鍵、Offline Root秘密鍵、Online Intermediate秘密鍵はAppStoreへ設定しません。
+公開済みパッケージは管理APIから一時停止／再開できます。停止中はストア一覧、詳細、Release一覧、ダウンロードから除外され、新しいReleaseも登録できません。Releaseの失効とは別の可逆なインシデント対応です。

@@ -52,6 +52,7 @@ pub struct Expectations<'a> {
 pub struct ValidationReport {
     pub release_id: String,
     pub asset_id: u64,
+    pub validation_attempt_id: String,
     pub reviewer_version: String,
     pub validated_at: u64,
     pub package_id: String,
@@ -169,6 +170,7 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
     Ok(ValidationReport {
         release_id: String::new(),
         asset_id: 0,
+        validation_attempt_id: String::new(),
         reviewer_version: env!("CARGO_PKG_VERSION").into(),
         validated_at: expected.unix_time,
         package_id: package_id.into(),
@@ -550,6 +552,10 @@ fn validate_capabilities(
                         .as_str()
                         .context("binary.requires must contain strings")?;
                     ensure!(
+                        mochios_certificate::is_valid_capability(capability),
+                        "invalid required Capability: {capability}"
+                    );
+                    ensure!(
                         required.insert(capability.to_owned()),
                         "duplicate required Capability: {capability}"
                     );
@@ -820,6 +826,15 @@ mod tests {
         .unwrap();
         assert_eq!(report.package_id, "org.mochios.example");
         assert!(
+            certificate
+                .verify(&issuer_public_key, 150, "com.example.outside")
+                .is_err()
+        );
+        let decoded = DeveloperCertificate::decode(&certificate_wire).unwrap();
+        let mut canonical = vec![0; decoded.encoded_len().unwrap()];
+        decoded.encode(&mut canonical).unwrap();
+        assert_eq!(canonical, certificate_wire);
+        assert!(
             inspect_with(
                 "10",
                 &subject_key_id,
@@ -890,5 +905,215 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    fn validate_header_bytes(bytes: &[u8]) -> Result<()> {
+        let mut package = NamedTempFile::new().unwrap();
+        package.write_all(bytes).unwrap();
+        package.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+        validate_header(package.as_file_mut(), bytes.len() as u64)
+    }
+
+    #[test]
+    fn header_rejects_every_noncanonical_field() {
+        let mut valid = vec![0u8; MPKG_HEADER_LEN];
+        valid[..4].copy_from_slice(b"MPKG");
+        valid[4..6].copy_from_slice(&1u16.to_le_bytes());
+        valid[8..10].copy_from_slice(&(MPKG_HEADER_LEN as u16).to_le_bytes());
+        validate_header_bytes(&valid).unwrap();
+
+        for (offset, value) in [
+            (0, b'X'),
+            (4, 2),
+            (6, 1),
+            (8, 31),
+            (10, 1),
+            (11, 1),
+            (20, 1),
+        ] {
+            let mut invalid = valid.clone();
+            invalid[offset] = value;
+            assert!(
+                validate_header_bytes(&invalid).is_err(),
+                "accepted offset {offset}"
+            );
+        }
+        let mut invalid_length = valid;
+        invalid_length[12..20].copy_from_slice(&1u64.to_le_bytes());
+        assert!(validate_header_bytes(&invalid_length).is_err());
+    }
+
+    fn payload_manifest(digest: &str, size: u64, mode: &str, capabilities: &str) -> toml::Value {
+        toml::from_str(&format!(
+            "format = 1\n[package]\nid = \"com.example.testapp\"\nname = \"TestApp\"\nversion = \"0.1.0\"\nkind = \"application\"\n\n[[file]]\nid = \"entry\"\npath = \"$/entry.elf\"\ndigest = \"sha256:{digest}\"\nsize = {size}\nmode = \"{mode}\"\n\n[[binary]]\npath = \"/applications/TestApp.app/entry.elf\"\nfile = \"entry\"\nkind = \"application\"\nrequires = [{capabilities}]\n"
+        ))
+        .unwrap()
+    }
+
+    fn payload_files(payload: &[u8]) -> ObservedFiles {
+        HashMap::from([(
+            "payload/bundle/entry.elf".into(),
+            ObservedFile {
+                size: payload.len() as u64,
+                sha256: Sha256::digest(payload).into(),
+            },
+        )])
+    }
+
+    fn capability_certificate(capabilities: &[&str]) -> DeveloperCertificate {
+        DeveloperCertificate {
+            serial_number: 1,
+            issuer_key_id: [1; 32],
+            developer_id: "019fad830240772ba6fd5f50596afb4c".into(),
+            subject_key_id: [2; 32],
+            subject_public_key: [3; 32],
+            not_before: 1,
+            not_after: 2,
+            key_usage: KEY_USAGE_PACKAGE_SIGNING,
+            package_id_scopes: vec![PackageIdScope::exact("com.example.testapp")],
+            allowed_capabilities: capabilities.iter().map(|value| (*value).into()).collect(),
+            signature: [0; 64],
+        }
+    }
+
+    #[test]
+    fn payload_manifest_rejects_every_integrity_mismatch() {
+        let payload = b"elf";
+        let digest = hex::encode(Sha256::digest(payload));
+        let files = payload_files(payload);
+        let valid = payload_manifest(&digest, 3, "0755", "\"window.create\"");
+        let reports = validate_manifest(&valid, &files).unwrap();
+        assert_eq!(
+            reports[0].install_path,
+            "/applications/TestApp.app/entry.elf"
+        );
+
+        assert!(validate_manifest(&payload_manifest(&digest, 4, "0755", ""), &files).is_err());
+        assert!(
+            validate_manifest(&payload_manifest(&"00".repeat(32), 3, "0755", ""), &files).is_err()
+        );
+        assert!(validate_manifest(&payload_manifest(&digest, 3, "0999", ""), &files).is_err());
+        assert!(validate_manifest(&valid, &HashMap::new()).is_err());
+
+        let mut unlisted = files.clone();
+        unlisted.insert(
+            "payload/bundle/extra".into(),
+            ObservedFile {
+                size: 0,
+                sha256: Sha256::digest([]).into(),
+            },
+        );
+        assert!(validate_manifest(&valid, &unlisted).is_err());
+        assert!(manifest_file_paths(Some("application"), "TestApp", "/bin/entry").is_err());
+        assert!(
+            manifest_file_paths(Some("binary"), "TestApp", "/applications/TestApp.app/entry")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn capability_requirements_are_valid_unique_and_allowed() {
+        let payload = b"elf";
+        let digest = hex::encode(Sha256::digest(payload));
+        let certificate = capability_certificate(&["fs.read.all", "window.create"]);
+        let valid = payload_manifest(&digest, 3, "0755", "\"window.create\", \"fs.read.all\"");
+        assert_eq!(
+            validate_capabilities(&valid, &certificate).unwrap(),
+            vec!["fs.read.all", "window.create"]
+        );
+        let duplicate =
+            payload_manifest(&digest, 3, "0755", "\"window.create\", \"window.create\"");
+        assert!(validate_capabilities(&duplicate, &certificate).is_err());
+        let outside = payload_manifest(&digest, 3, "0755", "\"process.spawn\"");
+        assert!(validate_capabilities(&outside, &certificate).is_err());
+        let invalid = payload_manifest(&digest, 3, "0755", "\"UNKNOWN Capability\"");
+        assert!(validate_capabilities(&invalid, &certificate).is_err());
+    }
+
+    #[test]
+    fn manifest_signature_uses_exact_bytes_and_domain() {
+        let developer = SigningKey::from_bytes(&[9; 32]);
+        let mut certificate = capability_certificate(&[]);
+        certificate.subject_public_key = developer.verifying_key().to_bytes();
+        certificate.subject_key_id = key_id(&certificate.subject_public_key);
+        let manifest = b"format = 1\n";
+        let mut message = MANIFEST_DOMAIN.to_vec();
+        message.extend_from_slice(&Sha256::digest(manifest));
+        let signature = developer.sign(&message).to_bytes();
+        verify_manifest_signature(&certificate, manifest, &signature).unwrap();
+        assert!(verify_manifest_signature(&certificate, b"format = 1\r\n", &signature).is_err());
+        let mut tampered = signature;
+        tampered[0] ^= 1;
+        assert!(verify_manifest_signature(&certificate, manifest, &tampered).is_err());
+    }
+
+    fn tar_with_entry(path: &str, bytes: &[u8]) -> Vec<u8> {
+        let mut builder = Builder::new(Vec::new());
+        append(&mut builder, path, bytes);
+        builder.finish().unwrap();
+        builder.into_inner().unwrap()
+    }
+
+    fn validate_tar(bytes: &[u8]) -> Result<()> {
+        let mut temporary = NamedTempFile::new().unwrap();
+        temporary.write_all(bytes).unwrap();
+        temporary.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+        validate_ustar_stream(temporary.as_file_mut(), bytes.len() as u64)
+    }
+
+    fn set_tar_type(bytes: &mut [u8], entry_type: u8) {
+        bytes[156] = entry_type;
+        bytes[148..156].fill(b' ');
+        let checksum = tar_header_checksum(bytes[..512].try_into().unwrap());
+        let encoded = format!("{checksum:06o}\0 ");
+        bytes[148..156].copy_from_slice(encoded.as_bytes());
+    }
+
+    #[test]
+    fn ustar_preflight_rejects_extensions_links_devices_and_corruption() {
+        let valid = tar_with_entry("manifest.toml", b"format = 1\n");
+        validate_tar(&valid).unwrap();
+        for entry_type in *b"12346xgLK" {
+            let mut invalid = valid.clone();
+            set_tar_type(&mut invalid, entry_type);
+            assert!(
+                validate_tar(&invalid).is_err(),
+                "accepted type {entry_type}"
+            );
+        }
+        let mut bad_magic = valid.clone();
+        bad_magic[257] = b'X';
+        assert!(validate_tar(&bad_magic).is_err());
+        let mut bad_checksum = valid.clone();
+        bad_checksum[0] ^= 1;
+        assert!(validate_tar(&bad_checksum).is_err());
+    }
+
+    #[test]
+    fn archive_rejects_duplicate_unknown_and_legacy_entries() {
+        let mut duplicate_builder = Builder::new(Vec::new());
+        append(&mut duplicate_builder, "payload/a", b"a");
+        append(&mut duplicate_builder, "payload/a", b"b");
+        duplicate_builder.finish().unwrap();
+        assert!(validate_tar(&duplicate_builder.into_inner().unwrap()).is_err());
+
+        for path in [
+            "unknown/file",
+            "signatures/unknown.sig",
+            "signatures/chain/root.cert",
+        ] {
+            let bytes = tar_with_entry(path, b"bad");
+            let mut temporary = NamedTempFile::new().unwrap();
+            temporary.write_all(&bytes).unwrap();
+            temporary.as_file_mut().seek(SeekFrom::Start(0)).unwrap();
+            assert!(
+                inspect_archive(temporary.reopen().unwrap()).is_err(),
+                "accepted {path}"
+            );
+        }
+
+        let mut legacy = NamedTempFile::new().unwrap();
+        legacy.write_all(b"legacy .pkg").unwrap();
+        assert!(validate_header(legacy.as_file_mut(), 11).is_err());
     }
 }

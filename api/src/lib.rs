@@ -553,10 +553,11 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         release_tag: input.release_tag.trim(),
         asset_name: input.asset.trim(),
     };
-    let verified_asset = match auth::github_release_asset(&req, &ctx.env, &lookup).await? {
-        Ok(asset) => asset,
-        Err(cause) => return error(&cause.code, &cause.message, cause.status),
-    };
+    let verified_asset =
+        match auth::github_release_asset_for_account(&ctx.env, &actor.account_id, &lookup).await? {
+            Ok(asset) => asset,
+            Err(cause) => return error(&cause.code, &cause.message, cause.status),
+        };
     if verified_asset.account_id != actor.account_id {
         return error(
             "ACTOR_IDENTITY_MISMATCH",

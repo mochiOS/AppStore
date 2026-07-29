@@ -199,11 +199,25 @@ async fn require_developer(
     env: &Env,
 ) -> Result<std::result::Result<String, Response>> {
     Ok(match auth::developer(req, env).await? {
-        Some(id) => Ok(id),
+        Some(actor) => Ok(actor.developer_id),
         None => Err(error(
             "DEVELOPER_AUTH_REQUIRED",
             "Developer authentication required",
             401,
+        )?),
+    })
+}
+
+async fn require_developer_actor(
+    req: &Request,
+    env: &Env,
+) -> Result<std::result::Result<auth::DeveloperActor, Response>> {
+    Ok(match auth::developer(req, env).await? {
+        Some(actor) => Ok(actor),
+        None => Err(error(
+            "DEVELOPER_AUTH_REQUIRED",
+            "An active verified Developer membership with owner, admin, or developer role is required",
+            403,
         )?),
     })
 }
@@ -433,10 +447,11 @@ async fn developer_app(req: Request, ctx: RouteContext<()>) -> Result<Response> 
 }
 
 async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let developer = match require_developer(&req, &ctx.env).await? {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
         Ok(v) => v,
         Err(r) => return Ok(r),
     };
+    let developer = actor.developer_id.clone();
     let bundle_id = param(&ctx, "bundle_id").to_string();
     let active_app: Option<Value> = store::first(
         &db(&ctx)?,
@@ -476,10 +491,18 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         release_tag: input.release_tag.trim(),
         asset_name: input.asset.trim(),
     };
-    let asset = match auth::github_release_asset(&req, &ctx.env, &lookup).await? {
+    let verified_asset = match auth::github_release_asset(&req, &ctx.env, &lookup).await? {
         Ok(asset) => asset,
         Err(cause) => return error(&cause.code, &cause.message, cause.status),
     };
+    if verified_asset.account_id != actor.account_id {
+        return error(
+            "ACTOR_IDENTITY_MISMATCH",
+            "Accounts and DeveloperCA authenticated different actors",
+            403,
+        );
+    }
+    let asset = verified_asset.release_asset;
     if !asset
         .repository
         .eq_ignore_ascii_case(input.repository.trim())
@@ -523,8 +546,8 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
            developer_certificate_developer_id,developer_certificate_issuer_key_id,
            developer_certificate_issuer_public_key,developer_certificate_issuance_source,
            minimum_mochios_version,changelog,
-           registered_by,created_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28)",
+           registered_by,registered_by_account_id,developer_display_name,created_at)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30)",
         &[
             store::value(&release_id),
             store::value(&bundle_id),
@@ -559,6 +582,8 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
                 .as_deref()
                 .map_or(worker::wasm_bindgen::JsValue::NULL, store::value),
             store::value(&developer),
+            store::value(&actor.account_id),
+            store::value(&actor.display_name),
             store::number(timestamp),
         ],
     )
@@ -572,11 +597,11 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     }
     store::audit(
         &db(&ctx)?,
-        Some(&developer),
+        Some(&actor.account_id),
         "release.create",
         "release",
         &release_id,
-        json!({"bundle_id":bundle_id,"version":input.version,"github_asset_id":asset.asset_id}),
+        json!({"developer_id":developer,"developer_role":actor.role,"bundle_id":bundle_id,"version":input.version,"github_asset_id":asset.asset_id}),
         timestamp,
     )
     .await?;

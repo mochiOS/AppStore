@@ -3,7 +3,11 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use worker::{Headers, Method, Request, RequestInit, Result, wasm_bindgen::JsValue};
 
-use crate::model::{AccountsReleaseAssetEnvelope, GitHubReleaseAsset, GitHubReleaseAssetRequest};
+use serde::Deserialize;
+
+use crate::model::{
+    AccountsReleaseAssetEnvelope, GitHubReleaseAssetRequest, VerifiedGitHubReleaseAsset,
+};
 
 pub struct ServiceError {
     pub status: u16,
@@ -25,7 +29,37 @@ fn constant_time_eq(expected: &str, provided: &str) -> bool {
     expected.len() == provided.len() && bool::from(expected.as_bytes().ct_eq(provided.as_bytes()))
 }
 
-pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<String>> {
+#[derive(Debug, Deserialize)]
+struct DeveloperEnvelope {
+    developer: DeveloperRecord,
+    membership: DeveloperMembership,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeveloperRecord {
+    id: String,
+    display_name: String,
+    status: String,
+    verification_status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeveloperMembership {
+    developer_id: String,
+    account_id: String,
+    role: String,
+    status: String,
+}
+
+#[derive(Debug)]
+pub struct DeveloperActor {
+    pub developer_id: String,
+    pub account_id: String,
+    pub display_name: String,
+    pub role: String,
+}
+
+pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<DeveloperActor>> {
     let developer_id = req.headers().get("X-Developer-ID")?.unwrap_or_default();
     let Some(headers) = authorization_headers(req)? else {
         return Ok(None);
@@ -39,8 +73,27 @@ pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<String
         &format!("https://developer-ca/v1/developers/{developer_id}"),
         &init,
     )?;
-    let response = env.service("DEVELOPER_CA")?.fetch_request(request).await?;
-    Ok((response.status_code() == 200).then_some(developer_id))
+    let mut response = env.service("DEVELOPER_CA")?.fetch_request(request).await?;
+    if response.status_code() != 200 {
+        return Ok(None);
+    }
+    let envelope: DeveloperEnvelope = response.json().await?;
+    let authorized = envelope.developer.id == developer_id
+        && envelope.developer.status == "active"
+        && envelope.developer.verification_status == "verified"
+        && envelope.membership.developer_id == developer_id
+        && envelope.membership.status == "active"
+        && matches!(
+            envelope.membership.role.as_str(),
+            "owner" | "admin" | "developer"
+        )
+        && !envelope.membership.account_id.is_empty();
+    Ok(authorized.then(|| DeveloperActor {
+        developer_id,
+        account_id: envelope.membership.account_id,
+        display_name: envelope.developer.display_name,
+        role: envelope.membership.role,
+    }))
 }
 
 pub struct CertificateIdentity {
@@ -136,7 +189,7 @@ pub async fn github_release_asset(
     req: &Request,
     env: &worker::Env,
     input: &GitHubReleaseAssetRequest<'_>,
-) -> Result<std::result::Result<GitHubReleaseAsset, ServiceError>> {
+) -> Result<std::result::Result<VerifiedGitHubReleaseAsset, ServiceError>> {
     let authorization = req.headers().get("Authorization")?.unwrap_or_default();
     if !authorization.starts_with("Bearer ") {
         return Ok(Err(ServiceError {
@@ -163,7 +216,10 @@ pub async fn github_release_asset(
     let status = response.status_code();
     if status == 200 {
         let envelope: AccountsReleaseAssetEnvelope = response.json().await?;
-        return Ok(Ok(envelope.release_asset));
+        return Ok(Ok(VerifiedGitHubReleaseAsset {
+            account_id: envelope.account_id,
+            release_asset: envelope.release_asset,
+        }));
     }
     let value: serde_json::Value = response.json().await.unwrap_or_default();
     Ok(Err(ServiceError {

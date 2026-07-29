@@ -56,6 +56,13 @@ pub struct GitHubReleaseAssetRequest<'a> {
 
 #[derive(Debug, Deserialize)]
 pub struct AccountsReleaseAssetEnvelope {
+    pub account_id: String,
+    pub release_asset: GitHubReleaseAsset,
+}
+
+#[derive(Debug)]
+pub struct VerifiedGitHubReleaseAsset {
+    pub account_id: String,
     pub release_asset: GitHubReleaseAsset,
 }
 

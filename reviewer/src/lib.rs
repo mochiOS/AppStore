@@ -575,7 +575,7 @@ mod tests {
         let mut certificate = DeveloperCertificate {
             serial_number: 9,
             issuer_key_id: key_id(&issuer.verifying_key().to_bytes()),
-            developer_id: "org.mochios.developer.example".into(),
+            developer_id: "019f9e5ac6687902b0e72fe53abfbef1".into(),
             subject_key_id: key_id(&developer.verifying_key().to_bytes()),
             subject_public_key: developer.verifying_key().to_bytes(),
             not_before: 100,
@@ -674,7 +674,7 @@ mod tests {
             inspect_with(
                 &serial,
                 &subject_key_id,
-                "org.mochios.developer.other",
+                "019f9e5ac6687902b0e72fe53abfbef2",
                 &issuer_key_id,
                 &issuer_public_key,
                 150,

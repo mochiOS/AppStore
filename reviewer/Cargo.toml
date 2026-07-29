@@ -11,7 +11,7 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = "2"
 hex = "0.4"
-mochios-certificate = { git = "https://github.com/mochiOS/syscalls", rev = "ee6be939de4635824df7f50858d66391dd6ead41" }
+mochios-certificate = { git = "https://github.com/mochiOS/syscalls", rev = "af217f5ca6a585110aabac813eb46dff8ccb7bfc" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

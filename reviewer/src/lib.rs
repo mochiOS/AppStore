@@ -570,11 +570,11 @@ mod tests {
             "format = 1\n[package]\nid = \"org.mochios.example\"\nname = \"Example\"\nversion = \"1.0.0\"\nkind = \"application\"\n\n[[file]]\nid = \"main\"\npath = \"$/entry.elf\"\ndigest = \"sha256:{digest}\"\nsize = {}\nmode = \"0755\"\n\n[[binary]]\npath = \"/applications/Example.app/entry.elf\"\nfile = \"main\"\nkind = \"application\"\nrequires = [\"window.create\"]\n",
             payload.len()
         );
-        let root = SigningKey::from_bytes(&[3; 32]);
+        let issuer = SigningKey::from_bytes(&[3; 32]);
         let developer = SigningKey::from_bytes(&[7; 32]);
         let mut certificate = DeveloperCertificate {
             serial_number: 9,
-            issuer_key_id: key_id(&root.verifying_key().to_bytes()),
+            issuer_key_id: key_id(&issuer.verifying_key().to_bytes()),
             developer_id: "org.mochios.developer.example".into(),
             subject_key_id: key_id(&developer.verifying_key().to_bytes()),
             subject_public_key: developer.verifying_key().to_bytes(),
@@ -585,7 +585,7 @@ mod tests {
             allowed_capabilities: vec!["window.create".into()],
             signature: [0; 64],
         };
-        certificate.signature = root
+        certificate.signature = issuer
             .sign(&certificate.signing_message().unwrap())
             .to_bytes();
         let mut certificate_wire = vec![0; certificate.encoded_len().unwrap()];
@@ -613,7 +613,7 @@ mod tests {
         let developer_id = certificate.developer_id.clone();
         let issuer_key_id = hex::encode(certificate.issuer_key_id);
         let public_key = STANDARD.encode(developer.verifying_key().to_bytes());
-        let issuer_public_key = root.verifying_key().to_bytes();
+        let issuer_public_key = issuer.verifying_key().to_bytes();
         let inspect_with = |serial_value: &str,
                             subject_value: &str,
                             developer_value: &str,

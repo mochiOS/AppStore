@@ -7,7 +7,7 @@ Cloudflare Workers上で動作するRust／`workers-rs`版APIです。D1、Accou
 ```http
 POST /v1/developer/apps/{package_id}/releases
 Authorization: Bearer <Accounts session token>
-X-Developer-ID: <内部Developer UUID>
+X-Developer-ID: <32桁小文字UUIDv7 Developer ID>
 Content-Type: application/json
 
 {
@@ -24,6 +24,8 @@ Content-Type: application/json
 Accountsがログイン中GitHub Accountの`push`／`maintain`／`admin`権限、公開済み固定tag、完全一致`.mpkg` assetを確認します。`latest`は拒否します。
 
 Developer CAのstatusが有効で内部Developer IDと一致するときだけ、serial、Subject／Issuer key identity、Certificate Developer ID、発行経路をReleaseへ固定します。Reviewer reportはこれらすべてと一致しなければ受理しません。report受理時と公開承認時にもstatusを再確認します。
+
+Package IDは`org.mochios.*`へ限定しません。`com.example.paint`、`io.github.user.tool`、`dev.tas0.volume`のような2 segment以上の小文字reverse-domain形式を共有Certificate crateで検証します。
 
 ## 検証状態
 

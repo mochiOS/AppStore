@@ -20,7 +20,7 @@ ReviewerはRelease登録時にDeveloper CAが検証して固定したCertificate
 
 - Certificate IDに対応するserial
 - Subject public keyとSubject Key ID
-- Certificate Developer ID
+- Certificate Developer ID（AppStore Releaseと同じ32桁UUIDv7本体）
 - Issuer public keyとIssuer Key ID
 - MCER署名、有効期間、package signing usage、Package ID完全一致scope
 - 全`[[binary]].requires`がallowed Capability内
@@ -29,6 +29,8 @@ ReviewerはRelease登録時にDeveloper CAが検証して固定したCertificate
 - MPKG v1 header、無圧縮ustar、entry type、重複・path traversal・未知signature拒否
 
 Issuer公開鍵はDeveloper CAがOffline Root署名Trust Snapshotまたはlegacy Root経路で検証した値です。Reviewerはその公開鍵でMCER署名を再検証し、AppStore APIはreport受理時と公開承認時にDeveloper CA statusを再照会します。未登録、不一致、失効、期限切れCertificateは拒否されます。
+
+Package IDは`org.mochios.*`へ限定せず、共有`mochios-certificate` validatorで2 segment以上の小文字reverse-domain形式を検証します。
 
 成功後、Releaseは`validation_status=valid`、`review_status=submitted`になります。審査担当者は[Console](https://console.mochios.org/#reviews)で最終承認または却下します。
 

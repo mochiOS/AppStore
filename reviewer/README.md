@@ -5,8 +5,7 @@ GitHub Releases上の`.mpkg`を一時ファイルへ取得し、展開・実行�
 ## 実行
 
 ```powershell
-$env:APPSTORE_ADMIN_TOKEN='<AppStore API ADMIN_TOKEN>'
-$env:APPSTORE_ADMIN_ACCOUNT_ID='<監査ログ用Account UUID>'
+$env:APPSTORE_REVIEWER_TOKEN='<AppStore API REVIEWER_TOKEN>'
 cargo run --release --manifest-path reviewer/Cargo.toml -- <release_id>
 ```
 
@@ -33,6 +32,8 @@ Issuer公開鍵はDeveloper CAがOffline Root署名Trust Snapshotまたはlegacy
 Package IDは`org.mochios.*`へ限定せず、共有`mochios-certificate` validatorで2 segment以上の小文字reverse-domain形式を検証します。
 
 成功後、Releaseは`validation_status=valid`、`review_status=submitted`になります。審査担当者は[Console](https://console.mochios.org/#reviews)で最終承認または却下します。
+
+Reviewer専用tokenはConsoleの`ADMIN_TOKEN`と分離します。検証reportはRelease ID、GitHub Asset ID、Asset SHA-256、Package digest、Reviewer version、検証時刻へ拘束され、別Releaseへ再利用できません。失敗時も固定error codeと短いsummaryだけを保存し、MPKG本体やraw payloadは保存しません。
 
 ## 検証
 

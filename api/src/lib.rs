@@ -233,6 +233,18 @@ fn require_admin(req: &Request, env: &Env) -> Result<std::result::Result<String,
     })
 }
 
+fn require_reviewer(req: &Request, env: &Env) -> Result<std::result::Result<(), Response>> {
+    Ok(if auth::reviewer(req, env)? {
+        Ok(())
+    } else {
+        Err(error(
+            "REVIEWER_AUTH_REQUIRED",
+            "Reviewer authentication required",
+            401,
+        )?)
+    })
+}
+
 async fn health(_: Request, _: RouteContext<()>) -> Result<Response> {
     let mut response = json_response(&json!({"status":"ok","service":"app-store-api"}), 200)?;
     response.headers_mut().set("Cache-Control", "no-store")?;
@@ -633,9 +645,13 @@ async fn list_developer_releases(req: Request, ctx: RouteContext<()>) -> Result<
 }
 
 async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
-        Ok(value) => value,
-        Err(response) => return Ok(response),
+    let actor = if auth::reviewer(&req, &ctx.env)? {
+        "mpkg-reviewer".to_owned()
+    } else {
+        match require_admin(&req, &ctx.env)? {
+            Ok(value) => value,
+            Err(response) => return Ok(response),
+        }
     };
     match store::release_by_id(&db(&ctx)?, param(&ctx, "release_id")).await? {
         Some(release) => json_response(&json!({"admin":actor,"release":release}), 200),
@@ -644,10 +660,10 @@ async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> 
 }
 
 async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
-        Ok(value) => value,
+    match require_reviewer(&req, &ctx.env)? {
+        Ok(()) => {}
         Err(response) => return Ok(response),
-    };
+    }
     let release_id = param(&ctx, "release_id");
     let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
@@ -663,13 +679,24 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         );
     }
     let input: ValidationInput = req.json().await?;
-    let sha256 = input.sha256.to_ascii_lowercase();
-    let manifest_hash = input.manifest_hash.to_ascii_lowercase();
+    let asset_sha256 = input.asset_sha256.to_ascii_lowercase();
+    let package_digest = input.package_digest.to_ascii_lowercase();
+    let manifest_digest = input.manifest_digest.to_ascii_lowercase();
     let expected_size = release
         .get("file_size")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    if input.package_id != value_str(&release, "bundle_id").unwrap_or("")
+    let expected_asset_id = release
+        .get("github_asset_id")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let timestamp = now();
+    if input.release_id != release_id
+        || input.asset_id != expected_asset_id
+        || input.reviewer_version.trim().is_empty()
+        || input.reviewer_version.len() > 64
+        || input.validated_at.abs_diff(timestamp as u64) > 600
+        || input.package_id != value_str(&release, "bundle_id").unwrap_or("")
         || input.version != value_str(&release, "version").unwrap_or("")
         || input.file_size != expected_size
         || input.certificate_id != value_str(&release, "developer_certificate_id").unwrap_or("")
@@ -683,11 +710,17 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             != value_str(&release, "developer_certificate_issuer_key_id").unwrap_or("")
         || input.minimum_mochios_version
             != value_str(&release, "minimum_mochios_version").unwrap_or("")
-        || sha256.len() != 64
-        || hex::decode(&sha256).is_err()
-        || manifest_hash.len() != 64
-        || hex::decode(&manifest_hash).is_err()
+        || asset_sha256.len() != 64
+        || hex::decode(&asset_sha256).is_err()
+        || package_digest.len() != 64
+        || hex::decode(&package_digest).is_err()
+        || package_digest != asset_sha256
+        || manifest_digest.len() != 64
+        || hex::decode(&manifest_digest).is_err()
         || input.signature.trim().is_empty()
+        || input.capabilities.len() > 256
+        || input.payloads.is_empty()
+        || input.payloads.len() > 10_000
     {
         return error(
             "PACKAGE_VALIDATION_MISMATCH",
@@ -697,7 +730,7 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
     }
     if let Some(github_digest) = value_str(&release, "github_digest")
         && let Some(github_sha256) = github_digest.strip_prefix("sha256:")
-        && !github_sha256.eq_ignore_ascii_case(&sha256)
+        && !github_sha256.eq_ignore_ascii_case(&asset_sha256)
     {
         return error(
             "GITHUB_DIGEST_MISMATCH",
@@ -706,7 +739,7 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         );
     }
     let public_key = value_str(&release, "developer_public_key").unwrap_or("");
-    if !valid_hash_signature(public_key, input.signature.trim(), &manifest_hash) {
+    if !valid_hash_signature(public_key, input.signature.trim(), &manifest_digest) {
         return error(
             "SIGNATURE_INVALID",
             "The embedded Developer Certificate signature is invalid",
@@ -733,31 +766,124 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             422,
         );
     }
-    let timestamp = now();
+    let capabilities_json = serde_json::to_string(&input.capabilities)?;
+    let payloads_json = serde_json::to_string(&input.payloads)?;
+    if capabilities_json.len() > 32 * 1024 || payloads_json.len() > 1024 * 1024 {
+        return error(
+            "VALIDATION_REPORT_TOO_LARGE",
+            "Validation report is too large",
+            413,
+        );
+    }
     store::run(
         &db(&ctx)?,
         "UPDATE releases
-            SET sha256=?1,manifest_hash=?2,signature=?3,validation_status='valid',
-                review_status='submitted',validation_message=NULL,validated_at=?4,
-                validated_by=?5,submitted_at=?4
-          WHERE release_id=?6 AND validation_status='pending' AND review_status='pending'",
+            SET sha256=?1,package_digest=?2,manifest_hash=?3,signature=?4,
+                capabilities_json=?5,payloads_json=?6,reviewer_version=?7,
+                validation_status='valid',review_status='submitted',validation_message=NULL,
+                validation_error_code=NULL,validated_at=?8,validated_by='mpkg-reviewer',submitted_at=?8
+          WHERE release_id=?9 AND github_asset_id=?10
+            AND validation_status='pending' AND review_status='pending'",
         &[
-            store::value(&sha256),
-            store::value(&manifest_hash),
+            store::value(&asset_sha256),
+            store::value(&package_digest),
+            store::value(&manifest_digest),
             store::value(input.signature.trim()),
-            store::number(timestamp),
-            store::value(&actor),
+            store::value(capabilities_json),
+            store::value(payloads_json),
+            store::value(input.reviewer_version.trim()),
+            store::number(input.validated_at as i64),
             store::value(release_id),
+            store::value(expected_asset_id as f64),
         ],
     )
     .await?;
     store::audit(
         &db(&ctx)?,
-        Some(&actor),
+        None,
         "release.validate",
         "release",
         release_id,
-        json!({"sha256":sha256,"file_size":input.file_size}),
+        json!({"developer_id":input.certificate_developer_id,"asset_id":expected_asset_id,"asset_sha256":asset_sha256,"package_digest":package_digest,"reviewer_version":input.reviewer_version,"file_size":input.file_size,"result":"valid"}),
+        timestamp,
+    )
+    .await?;
+    json_response(
+        &json!({"release":store::release_by_id(&db(&ctx)?,release_id).await?}),
+        200,
+    )
+}
+
+async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    match require_reviewer(&req, &ctx.env)? {
+        Ok(()) => {}
+        Err(response) => return Ok(response),
+    }
+    let release_id = param(&ctx, "release_id");
+    let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
+        return error("RELEASE_NOT_FOUND", "Release not found", 404);
+    };
+    if value_str(&release, "validation_status") != Some("pending")
+        || value_str(&release, "review_status") != Some("pending")
+        || value_str(&release, "publish_status") != Some("draft")
+    {
+        return error(
+            "INVALID_RELEASE_STATUS",
+            "Only pending draft releases can receive an initial validation failure",
+            409,
+        );
+    }
+    let input: model::ValidationFailureInput = req.json().await?;
+    let expected_asset_id = release
+        .get("github_asset_id")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let timestamp = now();
+    if input.release_id != release_id
+        || input.asset_id != expected_asset_id
+        || input.reviewer_version.trim().is_empty()
+        || input.reviewer_version.len() > 64
+        || input.validated_at.abs_diff(timestamp as u64) > 600
+        || !matches!(
+            input.error_code.as_str(),
+            "download_failed"
+                | "asset_mismatch"
+                | "package_invalid"
+                | "certificate_invalid"
+                | "reviewer_internal_error"
+        )
+        || input.error_summary.trim().is_empty()
+        || input.error_summary.chars().count() > 500
+    {
+        return error(
+            "VALIDATION_FAILURE_INVALID",
+            "Validation failure report is invalid",
+            422,
+        );
+    }
+    store::run(
+        &db(&ctx)?,
+        "UPDATE releases
+            SET validation_status='invalid',validation_error_code=?1,validation_message=?2,
+                reviewer_version=?3,validated_at=?4,validated_by='mpkg-reviewer'
+          WHERE release_id=?5 AND github_asset_id=?6 AND validation_status='pending'",
+        &[
+            store::value(&input.error_code),
+            store::value(input.error_summary.trim()),
+            store::value(input.reviewer_version.trim()),
+            store::number(input.validated_at as i64),
+            store::value(release_id),
+            store::value(expected_asset_id as f64),
+        ],
+    )
+    .await?;
+    store::audit(
+        &db(&ctx)?,
+        None,
+        "release.validation_failed",
+        "release",
+        release_id,
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":expected_asset_id,"result":"invalid","reason_code":input.error_code}),
         timestamp,
     )
     .await?;
@@ -1247,6 +1373,10 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v1/admin/releases", admin_releases)
         .get_async("/v1/admin/releases/:release_id", admin_release)
         .post_async("/v1/admin/releases/:release_id/validate", validate_release)
+        .post_async(
+            "/v1/admin/releases/:release_id/validation-failure",
+            invalidate_release,
+        )
         .post_async("/v1/admin/releases/:release_id/approve", approve_release)
         .post_async("/v1/admin/releases/:release_id/reject", reject_release)
         .get_async("/v1/admin/releases/:release_id/download", admin_download)

@@ -87,11 +87,16 @@ pub struct GitHubReleaseAsset {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ValidationInput {
+    pub release_id: String,
+    pub asset_id: u64,
+    pub reviewer_version: String,
+    pub validated_at: u64,
     pub package_id: String,
     pub version: String,
     pub file_size: u64,
-    pub sha256: String,
-    pub manifest_hash: String,
+    pub asset_sha256: String,
+    pub package_digest: String,
+    pub manifest_digest: String,
     pub signature: String,
     pub certificate_id: String,
     pub certificate_serial: String,
@@ -99,6 +104,30 @@ pub struct ValidationInput {
     pub certificate_developer_id: String,
     pub certificate_issuer_key_id: String,
     pub minimum_mochios_version: String,
+    pub capabilities: Vec<String>,
+    pub payloads: Vec<PayloadReport>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidationFailureInput {
+    pub release_id: String,
+    pub asset_id: u64,
+    pub reviewer_version: String,
+    pub validated_at: u64,
+    pub error_code: String,
+    pub error_summary: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PayloadReport {
+    pub file_id: String,
+    pub container_path: String,
+    pub install_path: String,
+    pub size: u64,
+    pub sha256: String,
+    pub mode: String,
 }
 
 #[derive(Debug, Deserialize)]

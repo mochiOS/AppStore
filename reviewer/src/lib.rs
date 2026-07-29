@@ -50,11 +50,16 @@ pub struct Expectations<'a> {
 
 #[derive(Debug, Serialize)]
 pub struct ValidationReport {
+    pub release_id: String,
+    pub asset_id: u64,
+    pub reviewer_version: String,
+    pub validated_at: u64,
     pub package_id: String,
     pub version: String,
     pub file_size: u64,
-    pub sha256: String,
-    pub manifest_hash: String,
+    pub asset_sha256: String,
+    pub package_digest: String,
+    pub manifest_digest: String,
     pub signature: String,
     pub certificate_id: String,
     pub certificate_serial: String,
@@ -62,6 +67,18 @@ pub struct ValidationReport {
     pub certificate_developer_id: String,
     pub certificate_issuer_key_id: String,
     pub minimum_mochios_version: String,
+    pub capabilities: Vec<String>,
+    pub payloads: Vec<PayloadReport>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PayloadReport {
+    pub file_id: String,
+    pub container_path: String,
+    pub install_path: String,
+    pub size: u64,
+    pub sha256: String,
+    pub mode: String,
 }
 
 pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<ValidationReport> {
@@ -76,6 +93,8 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
     let package_sha256 = hash_reader(&mut package)?;
     package.seek(SeekFrom::Start(0))?;
     validate_header(&mut package, file_size)?;
+    validate_ustar_stream(&mut package, file_size - MPKG_HEADER_LEN as u64)?;
+    package.seek(SeekFrom::Start(MPKG_HEADER_LEN as u64))?;
     let (files, metadata) = inspect_archive(package)?;
 
     let manifest_bytes = metadata
@@ -89,7 +108,7 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
         .context("signatures/manifest.sig is required")?;
     let manifest: toml::Value =
         toml::from_str(std::str::from_utf8(manifest_bytes)?).context("manifest.toml is invalid")?;
-    validate_manifest(&manifest, &files)?;
+    let payloads = validate_manifest(&manifest, &files)?;
     let package_id = manifest_string(&manifest, &["package", "id"], "package.id")?;
     let version = manifest_string(&manifest, &["package", "version"], "package.version")?;
     ensure!(
@@ -100,6 +119,19 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
 
     let certificate = DeveloperCertificate::decode(certificate_bytes)
         .map_err(|error| anyhow::anyhow!("developer.cert is invalid: {error}"))?;
+    let mut canonical_certificate = vec![
+        0;
+        certificate.encoded_len().map_err(
+            |error| anyhow::anyhow!("developer.cert cannot be encoded: {error}")
+        )?
+    ];
+    certificate
+        .encode(&mut canonical_certificate)
+        .map_err(|error| anyhow::anyhow!("developer.cert cannot be encoded: {error}"))?;
+    ensure!(
+        canonical_certificate == *certificate_bytes,
+        "developer.cert is not canonical MCER encoding"
+    );
     ensure!(
         key_id(expected.issuer_public_key) == certificate.issuer_key_id,
         "embedded Developer Certificate issuer differs from the trusted DeveloperCA issuer"
@@ -131,15 +163,20 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
         "embedded Developer Certificate Developer ID differs from registered certificate"
     );
     verify_manifest_signature(&certificate, manifest_bytes, signature_bytes)?;
-    validate_capabilities(&manifest, &certificate)?;
+    let capabilities = validate_capabilities(&manifest, &certificate)?;
 
-    let manifest_hash = hex::encode(Sha256::digest(manifest_bytes));
+    let manifest_digest = hex::encode(Sha256::digest(manifest_bytes));
     Ok(ValidationReport {
+        release_id: String::new(),
+        asset_id: 0,
+        reviewer_version: env!("CARGO_PKG_VERSION").into(),
+        validated_at: expected.unix_time,
         package_id: package_id.into(),
         version: version.into(),
         file_size,
-        sha256: package_sha256,
-        manifest_hash,
+        asset_sha256: package_sha256.clone(),
+        package_digest: package_sha256,
+        manifest_digest,
         signature: STANDARD.encode(signature_bytes),
         certificate_id: expected.certificate_id.into(),
         certificate_serial: expected.certificate_serial.into(),
@@ -147,6 +184,8 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
         certificate_developer_id: expected.certificate_developer_id.into(),
         certificate_issuer_key_id: expected.certificate_issuer_key_id.into(),
         minimum_mochios_version: expected.minimum_mochios_version.into(),
+        capabilities,
+        payloads,
     })
 }
 
@@ -174,6 +213,116 @@ fn validate_header(package: &mut File, file_size: u64) -> Result<()> {
     Ok(())
 }
 
+fn validate_ustar_stream(package: &mut File, stream_len: u64) -> Result<()> {
+    let mut consumed = 0u64;
+    let mut entry_count = 0usize;
+    let mut paths = BTreeSet::new();
+    let mut header = [0u8; 512];
+    while consumed < stream_len {
+        ensure!(
+            stream_len - consumed >= header.len() as u64,
+            "MPKG tar stream has a partial header"
+        );
+        package.read_exact(&mut header)?;
+        consumed += header.len() as u64;
+        if header.iter().all(|byte| *byte == 0) {
+            let mut buffer = [0u8; 64 * 1024];
+            while consumed < stream_len {
+                let count = usize::try_from((stream_len - consumed).min(buffer.len() as u64))?;
+                package.read_exact(&mut buffer[..count])?;
+                ensure!(
+                    buffer[..count].iter().all(|byte| *byte == 0),
+                    "MPKG tar stream contains data after terminator"
+                );
+                consumed += count as u64;
+            }
+            return Ok(());
+        }
+        ensure!(entry_count < MAX_ENTRIES, ".mpkg has too many entries");
+        entry_count += 1;
+        ensure!(
+            &header[257..263] == b"ustar\0" && &header[263..265] == b"00",
+            "MPKG tar entry is not canonical ustar"
+        );
+        ensure!(
+            parse_tar_octal(&header[148..156])? == tar_header_checksum(&header),
+            "MPKG tar entry checksum mismatch"
+        );
+        ensure!(
+            matches!(header[156], 0 | b'0' | b'5'),
+            "MPKG contains unsupported tar entry type"
+        );
+        let name = tar_cstr(&header[..100])?;
+        let prefix = tar_cstr(&header[345..500])?;
+        let path = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let path = safe_archive_path(path.as_bytes())?;
+        ensure!(paths.insert(path), "duplicate archive path");
+        let size = parse_tar_octal(&header[124..136])?;
+        let padded = size.checked_add(511).context("tar entry size overflow")? / 512 * 512;
+        ensure!(
+            consumed
+                .checked_add(padded)
+                .is_some_and(|end| end <= stream_len),
+            "MPKG tar entry exceeds stream length"
+        );
+        package.seek(SeekFrom::Current(i64::try_from(padded)?))?;
+        consumed += padded;
+    }
+    bail!("MPKG tar stream is missing its zero terminator")
+}
+
+fn tar_cstr(bytes: &[u8]) -> Result<String> {
+    let length = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    ensure!(
+        bytes[length..].iter().all(|byte| *byte == 0),
+        "tar path field is not canonical"
+    );
+    Ok(std::str::from_utf8(&bytes[..length])
+        .context("tar path is not UTF-8")?
+        .to_owned())
+}
+
+fn parse_tar_octal(bytes: &[u8]) -> Result<u64> {
+    let mut value = 0u64;
+    let mut seen_digit = false;
+    let mut terminated = false;
+    for byte in bytes {
+        if matches!(*byte, 0 | b' ') {
+            terminated = true;
+            continue;
+        }
+        ensure!(!terminated, "tar numeric field is not canonical");
+        ensure!((b'0'..=b'7').contains(byte), "invalid tar numeric field");
+        seen_digit = true;
+        value = value
+            .checked_mul(8)
+            .and_then(|current| current.checked_add(u64::from(*byte - b'0')))
+            .context("tar numeric field overflow")?;
+    }
+    Ok(if seen_digit { value } else { 0 })
+}
+
+fn tar_header_checksum(header: &[u8; 512]) -> u64 {
+    header
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| {
+            if (148..156).contains(&index) {
+                u64::from(b' ')
+            } else {
+                u64::from(*byte)
+            }
+        })
+        .sum()
+}
+
 fn inspect_archive(package: File) -> Result<(ObservedFiles, MetadataFiles)> {
     let mut archive = Archive::new(package);
     let mut files = HashMap::new();
@@ -195,6 +344,10 @@ fn inspect_archive(package: File) -> Result<(ObservedFiles, MetadataFiles)> {
             "entry outside MPKG roots: {path}"
         );
         if entry_type.is_dir() {
+            ensure!(
+                path == "signatures" || !path.starts_with("signatures/"),
+                "unknown signature directory: {path}"
+            );
             continue;
         }
         ensure!(
@@ -259,7 +412,7 @@ fn inspect_archive(package: File) -> Result<(ObservedFiles, MetadataFiles)> {
     Ok((files, metadata))
 }
 
-fn validate_manifest(manifest: &toml::Value, files: &ObservedFiles) -> Result<()> {
+fn validate_manifest(manifest: &toml::Value, files: &ObservedFiles) -> Result<Vec<PayloadReport>> {
     ensure!(
         manifest.get("format").and_then(toml::Value::as_integer) == Some(1),
         "unsupported manifest format"
@@ -290,6 +443,7 @@ fn validate_manifest(manifest: &toml::Value, files: &ObservedFiles) -> Result<()
     );
     let mut expected_paths = BTreeSet::new();
     let mut file_ids = BTreeMap::new();
+    let mut payloads = Vec::with_capacity(declared.len());
     for item in declared {
         let id = item
             .get("id")
@@ -302,7 +456,7 @@ fn validate_manifest(manifest: &toml::Value, files: &ObservedFiles) -> Result<()
             .context("file.path is missing")?;
         let (payload_path, install_path) = manifest_file_paths(kind, package_name, path)?;
         ensure!(
-            file_ids.insert(id, install_path).is_none(),
+            file_ids.insert(id, install_path.clone()).is_none(),
             "duplicate file.id: {id}"
         );
         ensure!(
@@ -339,6 +493,14 @@ fn validate_manifest(manifest: &toml::Value, files: &ObservedFiles) -> Result<()
                 && mode.bytes().all(|byte| matches!(byte, b'0'..=b'7')),
             "file.mode is invalid"
         );
+        payloads.push(PayloadReport {
+            file_id: id.into(),
+            container_path: payload_path,
+            install_path,
+            size,
+            sha256: hex::encode(observed.sha256),
+            mode: mode.into(),
+        });
     }
     for payload in files.keys().filter(|path| path.starts_with("payload/")) {
         ensure!(
@@ -366,15 +528,20 @@ fn validate_manifest(manifest: &toml::Value, files: &ObservedFiles) -> Result<()
             );
         }
     }
-    Ok(())
+    payloads.sort_by(|left, right| left.file_id.cmp(&right.file_id));
+    Ok(payloads)
 }
 
-fn validate_capabilities(manifest: &toml::Value, certificate: &DeveloperCertificate) -> Result<()> {
+fn validate_capabilities(
+    manifest: &toml::Value,
+    certificate: &DeveloperCertificate,
+) -> Result<Vec<String>> {
     let allowed: BTreeSet<_> = certificate
         .allowed_capabilities
         .iter()
         .map(String::as_str)
         .collect();
+    let mut required = BTreeSet::new();
     if let Some(binaries) = manifest.get("binary").and_then(toml::Value::as_array) {
         for binary in binaries {
             if let Some(requires) = binary.get("requires").and_then(toml::Value::as_array) {
@@ -383,6 +550,10 @@ fn validate_capabilities(manifest: &toml::Value, certificate: &DeveloperCertific
                         .as_str()
                         .context("binary.requires must contain strings")?;
                     ensure!(
+                        required.insert(capability.to_owned()),
+                        "duplicate required Capability: {capability}"
+                    );
+                    ensure!(
                         allowed.contains(capability),
                         "Developer Certificate does not allow Capability: {capability}"
                     );
@@ -390,7 +561,7 @@ fn validate_capabilities(manifest: &toml::Value, certificate: &DeveloperCertific
             }
         }
     }
-    Ok(())
+    Ok(required.into_iter().collect())
 }
 
 fn verify_manifest_signature(

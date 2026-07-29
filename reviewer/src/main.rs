@@ -7,13 +7,13 @@ use std::{
 
 use anyhow::{Context, Result, bail, ensure};
 use clap::Parser;
-use mochios_mpkg_reviewer::{Expectations, MAX_PACKAGE_BYTES, inspect_mpkg};
+use mochios_mpkg_reviewer::{Expectations, MAX_PACKAGE_BYTES, ValidationReport, inspect_mpkg};
 use reqwest::{
     Url,
     blocking::{Client, Response},
     redirect::{Action, Attempt, Policy},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 #[derive(Parser)]
@@ -33,6 +33,8 @@ struct ReleaseEnvelope {
 
 #[derive(Deserialize)]
 struct Release {
+    release_id: String,
+    github_asset_id: u64,
     bundle_id: String,
     version: String,
     file_size: u64,
@@ -50,11 +52,20 @@ struct Release {
     publish_status: String,
 }
 
+#[derive(Serialize)]
+struct ValidationFailure<'a> {
+    release_id: &'a str,
+    asset_id: u64,
+    reviewer_version: &'static str,
+    validated_at: u64,
+    error_code: &'static str,
+    error_summary: String,
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
-    let token = env::var("APPSTORE_ADMIN_TOKEN").context("APPSTORE_ADMIN_TOKEN is required")?;
-    let account_id =
-        env::var("APPSTORE_ADMIN_ACCOUNT_ID").context("APPSTORE_ADMIN_ACCOUNT_ID is required")?;
+    let token =
+        env::var("APPSTORE_REVIEWER_TOKEN").context("APPSTORE_REVIEWER_TOKEN is required")?;
     let unix_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let api = validated_api_origin(&args.api)?;
     let client = Client::builder()
@@ -68,13 +79,59 @@ fn main() -> Result<()> {
     let release: ReleaseEnvelope = checked(
         client
             .get(&release_url)
-            .header("X-Admin-Token", &token)
-            .header("X-Admin-Account-ID", &account_id)
+            .header("X-Reviewer-Token", &token)
             .send()?,
     )?
     .json()
     .context("AppStore returned an invalid release response")?;
     let release = release.release;
+    let validation_url = format!("{release_url}/validate");
+    let report = match review(&client, &release, unix_time) {
+        Ok(report) => report,
+        Err(cause) => {
+            let summary = cause.to_string().chars().take(500).collect::<String>();
+            let error_code = if summary.contains("download") || summary.contains("request failed") {
+                "download_failed"
+            } else if summary.contains("GitHub") || summary.contains("registered") {
+                "asset_mismatch"
+            } else if summary.contains("certificate") || summary.contains("Certificate") {
+                "certificate_invalid"
+            } else {
+                "package_invalid"
+            };
+            let failure_url = format!("{release_url}/validation-failure");
+            checked(
+                client
+                    .post(failure_url)
+                    .header("X-Reviewer-Token", &token)
+                    .json(&ValidationFailure {
+                        release_id: &release.release_id,
+                        asset_id: release.github_asset_id,
+                        reviewer_version: env!("CARGO_PKG_VERSION"),
+                        validated_at: unix_time,
+                        error_code,
+                        error_summary: summary,
+                    })
+                    .send()?,
+            )?;
+            return Err(cause);
+        }
+    };
+    checked(
+        client
+            .post(validation_url)
+            .header("X-Reviewer-Token", token)
+            .json(&report)
+            .send()?,
+    )?;
+    println!(
+        "validated {} {} ({})",
+        report.package_id, report.version, args.release_id
+    );
+    Ok(())
+}
+
+fn review(client: &Client, release: &Release, unix_time: u64) -> Result<ValidationReport> {
     let issuer_public_key: [u8; 32] = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         release.developer_certificate_issuer_public_key.trim(),
@@ -104,7 +161,7 @@ fn main() -> Result<()> {
     let mut package = NamedTempFile::new().context("failed to create temporary package file")?;
     copy_limited(&mut response, package.as_file_mut(), MAX_PACKAGE_BYTES)?;
 
-    let report = inspect_mpkg(
+    let mut report = inspect_mpkg(
         package.path(),
         &Expectations {
             package_id: &release.bundle_id,
@@ -121,20 +178,9 @@ fn main() -> Result<()> {
             unix_time,
         },
     )?;
-    let validation_url = format!("{release_url}/validate");
-    checked(
-        client
-            .post(validation_url)
-            .header("X-Admin-Token", token)
-            .header("X-Admin-Account-ID", account_id)
-            .json(&report)
-            .send()?,
-    )?;
-    println!(
-        "validated {} {} ({})",
-        report.package_id, report.version, args.release_id
-    );
-    Ok(())
+    report.release_id = release.release_id.clone();
+    report.asset_id = release.github_asset_id;
+    Ok(report)
 }
 
 fn validated_api_origin(value: &str) -> Result<String> {

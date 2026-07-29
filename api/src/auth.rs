@@ -246,3 +246,9 @@ pub fn admin(req: &Request, env: &worker::Env) -> Result<Option<String>> {
     }
     Ok(Some(actor))
 }
+
+pub fn reviewer(req: &Request, env: &worker::Env) -> Result<bool> {
+    let expected = env.secret("REVIEWER_TOKEN")?.to_string();
+    let provided = req.headers().get("X-Reviewer-Token")?.unwrap_or_default();
+    Ok(!expected.is_empty() && constant_time_eq(&expected, &provided))
+}

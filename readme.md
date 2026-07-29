@@ -79,6 +79,7 @@ MPKG形式と署名対象は[docs/appbundle.md](docs/appbundle.md)、審査ツ�
 
 ```powershell
 npx wrangler secret put ADMIN_TOKEN --config api/wrangler.jsonc
+npx wrangler secret put REVIEWER_TOKEN --config api/wrangler.jsonc
 npx wrangler secret put APPSTORE_SERVICE_TOKEN --config api/wrangler.jsonc
 npm run api:migrate:remote
 npm run api:deploy

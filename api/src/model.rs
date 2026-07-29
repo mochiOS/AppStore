@@ -89,6 +89,7 @@ pub struct GitHubReleaseAsset {
 pub struct ValidationInput {
     pub release_id: String,
     pub asset_id: u64,
+    pub validation_attempt_id: String,
     pub reviewer_version: String,
     pub validated_at: u64,
     pub package_id: String,
@@ -113,6 +114,7 @@ pub struct ValidationInput {
 pub struct ValidationFailureInput {
     pub release_id: String,
     pub asset_id: u64,
+    pub validation_attempt_id: String,
     pub reviewer_version: String,
     pub validated_at: u64,
     pub error_code: String,

@@ -8,6 +8,8 @@ const UUID_DEVELOPER_IDS: &str = include_str!("../migrations/0005_uuid_developer
 const PACKAGE_SUSPENSIONS: &str = include_str!("../migrations/0006_package_suspensions.sql");
 const RELEASE_VALIDATION_REPORTS: &str =
     include_str!("../migrations/0007_release_validation_reports.sql");
+const VALIDATION_ATTEMPT_LEASES: &str =
+    include_str!("../migrations/0008_validation_attempt_leases.sql");
 
 #[test]
 fn package_suspension_is_reversible() {
@@ -64,6 +66,7 @@ fn validation_report_schema_and_audit_log_are_hardened() {
         UUID_DEVELOPER_IDS,
         PACKAGE_SUSPENSIONS,
         RELEASE_VALIDATION_REPORTS,
+        VALIDATION_ATTEMPT_LEASES,
     ] {
         connection
             .execute_batch(migration)
@@ -92,6 +95,8 @@ fn validation_report_schema_and_audit_log_are_hardened() {
         "rejection_reason_code",
         "withdrawn_at",
         "last_integrity_checked_at",
+        "validation_attempt_id",
+        "validation_started_at",
     ] {
         let exists = connection
             .query_row(
@@ -102,6 +107,78 @@ fn validation_report_schema_and_audit_log_are_hardened() {
             .unwrap();
         assert_eq!(exists, 1, "missing {column}");
     }
+}
+
+#[test]
+fn reviewer_lease_suppresses_duplicates_and_binds_results() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    for migration in [
+        INITIAL,
+        GITHUB_RELEASES,
+        CERTIFICATE_SERIAL,
+        CERTIFICATE_IDENTITY,
+        UUID_DEVELOPER_IDS,
+        PACKAGE_SUSPENSIONS,
+        RELEASE_VALIDATION_REPORTS,
+        VALIDATION_ATTEMPT_LEASES,
+    ] {
+        connection
+            .execute_batch(migration)
+            .expect("apply migration");
+    }
+    connection.execute_batch(
+        "INSERT INTO bundle_ids VALUES('com.example.testapp','019fad830240772ba6fd5f50596afb4c','TestApp','active',1);
+         INSERT INTO apps(app_id,bundle_id,developer_id,display_name,created_at,updated_at)
+           VALUES('app','com.example.testapp','019fad830240772ba6fd5f50596afb4c','TestApp',1,1);
+         INSERT INTO releases(release_id,bundle_id,version,github_asset_id,file_size,
+           developer_certificate_id,developer_public_key,created_at)
+           VALUES('rel','com.example.testapp','0.1.0',42,100,'cert','public',1);",
+    ).unwrap();
+
+    assert_eq!(
+        connection
+            .execute(
+                "UPDATE releases SET validation_attempt_id='attempt-a',validation_started_at=1000
+              WHERE release_id='rel' AND validation_status='pending' AND review_status='pending'
+                AND publish_status='draft'
+                AND (validation_started_at IS NULL OR validation_started_at<400)",
+                [],
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        connection
+            .execute(
+                "UPDATE releases SET validation_attempt_id='attempt-b',validation_started_at=1001
+              WHERE release_id='rel' AND validation_status='pending' AND review_status='pending'
+                AND publish_status='draft'
+                AND (validation_started_at IS NULL OR validation_started_at<401)",
+                [],
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        connection
+            .execute(
+                "UPDATE releases SET validation_status='valid',review_status='submitted'
+              WHERE release_id='rel' AND validation_attempt_id='attempt-b'",
+                [],
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        connection
+            .execute(
+                "UPDATE releases SET validation_status='valid',review_status='submitted'
+              WHERE release_id='rel' AND validation_attempt_id='attempt-a'",
+                [],
+            )
+            .unwrap(),
+        1
+    );
 }
 
 #[test]

@@ -664,7 +664,7 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         "release.create",
         "release",
         &release_id,
-        json!({"developer_id":developer,"developer_role":actor.role,"bundle_id":bundle_id,"version":input.version,"github_asset_id":asset.asset_id}),
+        json!({"developer_id":developer,"developer_role":actor.role,"package_id":bundle_id,"version":input.version,"asset_id":asset.asset_id,"result":"registered"}),
         timestamp,
     )
     .await?;
@@ -696,15 +696,61 @@ async fn list_developer_releases(req: Request, ctx: RouteContext<()>) -> Result<
 }
 
 async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = if auth::reviewer(&req, &ctx.env)? {
-        "mpkg-reviewer".to_owned()
-    } else {
-        match require_admin(&req, &ctx.env)? {
-            Ok(value) => value,
-            Err(response) => return Ok(response),
+    let release_id = param(&ctx, "release_id");
+    if auth::reviewer(&req, &ctx.env)? {
+        if let Some(response) =
+            rate_limited(&req, &ctx.env, "REVIEWER_RATE_LIMITER", "start").await?
+        {
+            return Ok(response);
         }
+        let timestamp = now();
+        let attempt_id = id("attempt");
+        let claimed: Option<Value> = store::first(
+            &db(&ctx)?,
+            "UPDATE releases SET validation_attempt_id=?1,validation_started_at=?2
+              WHERE release_id=?3 AND validation_status='pending' AND review_status='pending'
+                AND publish_status='draft'
+                AND (validation_started_at IS NULL OR validation_started_at<?4)
+              RETURNING *",
+            &[
+                store::value(&attempt_id),
+                store::number(timestamp),
+                store::value(release_id),
+                store::number(timestamp - 600),
+            ],
+        )
+        .await?;
+        let Some(release) = claimed else {
+            return if store::release_by_id(&db(&ctx)?, release_id)
+                .await?
+                .is_some()
+            {
+                error(
+                    "VALIDATION_ALREADY_RUNNING",
+                    "Release is not pending or already has an active Reviewer lease",
+                    409,
+                )
+            } else {
+                error("RELEASE_NOT_FOUND", "Release not found", 404)
+            };
+        };
+        store::audit(
+            &db(&ctx)?,
+            None,
+            "release.validation_started",
+            "release",
+            release_id,
+            json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"validation_attempt_id":attempt_id,"result":"started"}),
+            timestamp,
+        )
+        .await?;
+        return json_response(&json!({"admin":"mpkg-reviewer","release":release}), 200);
+    }
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
     };
-    match store::release_by_id(&db(&ctx)?, param(&ctx, "release_id")).await? {
+    match store::release_by_id(&db(&ctx)?, release_id).await? {
         Some(release) => json_response(&json!({"admin":actor,"release":release}), 200),
         None => error("RELEASE_NOT_FOUND", "Release not found", 404),
     }
@@ -749,6 +795,7 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
     let timestamp = now();
     if input.release_id != release_id
         || input.asset_id != expected_asset_id
+        || input.validation_attempt_id != value_str(&release, "validation_attempt_id").unwrap_or("")
         || input.reviewer_version.trim().is_empty()
         || input.reviewer_version.len() > 64
         || input.validated_at.abs_diff(timestamp as u64) > 600
@@ -831,15 +878,16 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             413,
         );
     }
-    store::run(
+    let updated: Option<Value> = store::first(
         &db(&ctx)?,
         "UPDATE releases
             SET sha256=?1,package_digest=?2,manifest_hash=?3,signature=?4,
                 capabilities_json=?5,payloads_json=?6,reviewer_version=?7,
                 validation_status='valid',review_status='submitted',validation_message=NULL,
                 validation_error_code=NULL,validated_at=?8,validated_by='mpkg-reviewer',submitted_at=?8
-          WHERE release_id=?9 AND github_asset_id=?10
-            AND validation_status='pending' AND review_status='pending'",
+          WHERE release_id=?9 AND github_asset_id=?10 AND validation_attempt_id=?11
+            AND validation_status='pending' AND review_status='pending'
+          RETURNING release_id",
         &[
             store::value(&asset_sha256),
             store::value(&package_digest),
@@ -851,16 +899,24 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             store::number(input.validated_at as i64),
             store::value(release_id),
             store::value(expected_asset_id as f64),
+            store::value(&input.validation_attempt_id),
         ],
     )
     .await?;
+    if updated.is_none() {
+        return error(
+            "VALIDATION_LEASE_STALE",
+            "Reviewer validation lease is stale",
+            409,
+        );
+    }
     store::audit(
         &db(&ctx)?,
         None,
-        "release.validate",
+        "release.validation_succeeded",
         "release",
         release_id,
-        json!({"developer_id":input.certificate_developer_id,"asset_id":expected_asset_id,"asset_sha256":asset_sha256,"package_digest":package_digest,"reviewer_version":input.reviewer_version,"file_size":input.file_size,"result":"valid"}),
+        json!({"developer_id":input.certificate_developer_id,"asset_id":expected_asset_id,"asset_sha256":asset_sha256,"package_digest":package_digest,"reviewer_version":input.reviewer_version,"validation_attempt_id":input.validation_attempt_id,"file_size":input.file_size,"result":"valid"}),
         timestamp,
     )
     .await?;
@@ -902,6 +958,7 @@ async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<R
     let timestamp = now();
     if input.release_id != release_id
         || input.asset_id != expected_asset_id
+        || input.validation_attempt_id != value_str(&release, "validation_attempt_id").unwrap_or("")
         || input.reviewer_version.trim().is_empty()
         || input.reviewer_version.len() > 64
         || input.validated_at.abs_diff(timestamp as u64) > 600
@@ -922,12 +979,14 @@ async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<R
             422,
         );
     }
-    store::run(
+    let updated: Option<Value> = store::first(
         &db(&ctx)?,
         "UPDATE releases
             SET validation_status='invalid',validation_error_code=?1,validation_message=?2,
                 reviewer_version=?3,validated_at=?4,validated_by='mpkg-reviewer'
-          WHERE release_id=?5 AND github_asset_id=?6 AND validation_status='pending'",
+          WHERE release_id=?5 AND github_asset_id=?6 AND validation_attempt_id=?7
+            AND validation_status='pending'
+          RETURNING release_id",
         &[
             store::value(&input.error_code),
             store::value(input.error_summary.trim()),
@@ -935,16 +994,24 @@ async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<R
             store::number(input.validated_at as i64),
             store::value(release_id),
             store::value(expected_asset_id as f64),
+            store::value(&input.validation_attempt_id),
         ],
     )
     .await?;
+    if updated.is_none() {
+        return error(
+            "VALIDATION_LEASE_STALE",
+            "Reviewer validation lease is stale",
+            409,
+        );
+    }
     store::audit(
         &db(&ctx)?,
         None,
         "release.validation_failed",
         "release",
         release_id,
-        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":expected_asset_id,"result":"invalid","reason_code":input.error_code}),
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":expected_asset_id,"package_id":value_str(&release,"bundle_id"),"validation_attempt_id":input.validation_attempt_id,"result":"invalid","reason_code":input.error_code}),
         timestamp,
     )
     .await?;
@@ -1052,7 +1119,17 @@ async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response
         "release.approve",
         "release",
         release_id,
-        json!({}),
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"approved"}),
+        timestamp,
+    )
+    .await?;
+    store::audit(
+        &db(&ctx)?,
+        Some(&actor),
+        "release.publish",
+        "release",
+        release_id,
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"published"}),
         timestamp,
     )
     .await?;
@@ -1612,7 +1689,8 @@ async fn request_revalidation(req: Request, ctx: RouteContext<()>) -> Result<Res
             publish_status='draft',sha256=NULL,package_digest=NULL,manifest_hash=NULL,
             signature=NULL,capabilities_json=NULL,payloads_json=NULL,reviewer_version=NULL,
             validation_error_code=NULL,validation_message=NULL,validated_at=NULL,validated_by=NULL,
-            submitted_at=NULL,reviewed_at=NULL,reviewed_by=NULL,published_at=NULL,withdrawn_at=?1
+            submitted_at=NULL,reviewed_at=NULL,reviewed_by=NULL,published_at=NULL,withdrawn_at=?1,
+            validation_attempt_id=NULL,validation_started_at=NULL
           WHERE release_id=?2",
         &[store::number(timestamp), store::value(release_id)],
     )

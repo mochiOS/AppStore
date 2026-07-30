@@ -12,6 +12,8 @@ const VALIDATION_ATTEMPT_LEASES: &str =
     include_str!("../migrations/0008_validation_attempt_leases.sql");
 const REMOVE_PRICE_AND_MINIMUM_OS: &str =
     include_str!("../migrations/0009_remove_price_and_minimum_os.sql");
+const BACKFILL_BUNDLE_RESERVATION_AUDITS: &str =
+    include_str!("../migrations/0010_backfill_bundle_reservation_audits.sql");
 
 #[test]
 fn package_suspension_is_reversible() {
@@ -70,6 +72,7 @@ fn validation_report_schema_and_audit_log_are_hardened() {
         RELEASE_VALIDATION_REPORTS,
         VALIDATION_ATTEMPT_LEASES,
         REMOVE_PRICE_AND_MINIMUM_OS,
+        BACKFILL_BUNDLE_RESERVATION_AUDITS,
     ] {
         connection
             .execute_batch(migration)
@@ -123,6 +126,33 @@ fn validation_report_schema_and_audit_log_are_hardened() {
             .unwrap();
         assert_eq!(exists, 0, "obsolete {table}.{column} remains");
     }
+}
+
+#[test]
+fn bundle_reservation_audit_backfill_is_idempotent() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    connection.execute_batch(INITIAL).unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO bundle_ids VALUES ('org.mochios.example','developer','Example','reserved',1);",
+        )
+        .unwrap();
+
+    connection
+        .execute_batch(BACKFILL_BUNDLE_RESERVATION_AUDITS)
+        .unwrap();
+    connection
+        .execute_batch(BACKFILL_BUNDLE_RESERVATION_AUDITS)
+        .unwrap();
+
+    let audit_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM audit_logs WHERE action='bundle.reserve' AND target_id='org.mochios.example'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(audit_count, 1);
 }
 
 #[test]

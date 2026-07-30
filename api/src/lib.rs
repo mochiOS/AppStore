@@ -24,7 +24,7 @@ fn now() -> i64 {
     (Date::now().as_millis() / 1000) as i64
 }
 fn id(prefix: &str) -> String {
-    format!("{prefix}_{}", uuid::Uuid::now_v7().simple())
+    store::id(prefix, now())
 }
 fn param<'a>(ctx: &'a RouteContext<()>, name: &str) -> &'a str {
     ctx.param(name).map(String::as_str).unwrap_or("")
@@ -417,21 +417,47 @@ async fn bundle_ids(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if !valid_bundle_id(input.bundle_id.trim()) || input.app_name.trim().is_empty() {
         return error("VALIDATION_ERROR", "bundle_id or app_name is invalid", 422);
     }
-    let result = store::run(&db(&ctx)?, "INSERT INTO bundle_ids(bundle_id,developer_id,app_name,status,created_at) VALUES(?1,?2,?3,'reserved',?4)", &[store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.app_name.trim()),store::number(now())]).await;
-    if result.is_err() {
-        return error("BUNDLE_ID_ALREADY_EXISTS", "Bundle ID already exists", 409);
-    }
-    store::audit(
-        &db(&ctx)?,
-        Some(&developer),
-        "bundle.reserve",
-        "bundle_id",
-        input.bundle_id.trim(),
-        json!({}),
-        now(),
+    let database = db(&ctx)?;
+    let bundle_id = input.bundle_id.trim();
+    let app_name = input.app_name.trim();
+    let existing: Option<Value> = store::first(
+        &database,
+        "SELECT bundle_id,developer_id,app_name,status,created_at FROM bundle_ids WHERE bundle_id=?1 LIMIT 1",
+        &[store::value(bundle_id)],
     )
     .await?;
-    json_response(&json!({"bundle_id":input.bundle_id}), 201)
+    if let Some(existing) = existing {
+        if value_str(&existing, "developer_id") == Some(developer.as_str()) {
+            return json_response(&json!({"bundle_id":bundle_id,"already_reserved":true}), 200);
+        }
+        return error("BUNDLE_ID_ALREADY_EXISTS", "Bundle ID already exists", 409);
+    }
+    let timestamp = now();
+    database
+        .batch(vec![
+            database
+                .prepare("INSERT INTO bundle_ids(bundle_id,developer_id,app_name,status,created_at) VALUES(?1,?2,?3,'reserved',?4)")
+                .bind(&[
+                    store::value(bundle_id),
+                    store::value(&developer),
+                    store::value(app_name),
+                    store::number(timestamp),
+                ])?,
+            store::audit_statement(
+                &database,
+                Some(&developer),
+                "bundle.reserve",
+                "bundle_id",
+                bundle_id,
+                json!({}),
+                timestamp,
+            )?,
+        ])
+        .await?;
+    json_response(
+        &json!({"bundle_id":bundle_id,"already_reserved":false}),
+        201,
+    )
 }
 
 async fn developer_apps(req: Request, ctx: RouteContext<()>) -> Result<Response> {

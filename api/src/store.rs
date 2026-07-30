@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use uuid::{NoContext, Timestamp, Uuid};
 use worker::{D1Database, Result, wasm_bindgen::JsValue};
 
 use crate::model::{PublicApp, ReleaseView};
@@ -10,6 +11,11 @@ pub fn value(value: impl Into<JsValue>) -> JsValue {
 
 pub fn number(value: i64) -> JsValue {
     JsValue::from_f64(value as f64)
+}
+
+pub fn id(prefix: &str, now: i64) -> String {
+    let uuid = Uuid::new_v7(Timestamp::from_unix(NoContext, now.max(0) as u64, 0));
+    format!("{prefix}_{}", uuid.simple())
 }
 
 pub async fn rows<T: DeserializeOwned>(
@@ -143,9 +149,33 @@ pub async fn audit(
     metadata: Value,
     now: i64,
 ) -> Result<()> {
-    run(db,
+    audit_statement(db, actor, action, target_type, target_id, metadata, now)?
+        .run()
+        .await?;
+    Ok(())
+}
+
+pub fn audit_statement(
+    db: &D1Database,
+    actor: Option<&str>,
+    action: &str,
+    target_type: &str,
+    target_id: &str,
+    metadata: Value,
+    now: i64,
+) -> Result<worker::D1PreparedStatement> {
+    db.prepare(
         "INSERT INTO audit_logs (audit_id,actor_id,action,target_type,target_id,metadata_json,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        &[value(format!("audit_{}", uuid::Uuid::now_v7().simple())), actor.map_or(JsValue::NULL, value), value(action), value(target_type), value(target_id), value(metadata.to_string()), number(now)]).await
+    )
+    .bind(&[
+        value(id("audit", now)),
+        actor.map_or(JsValue::NULL, value),
+        value(action),
+        value(target_type),
+        value(target_id),
+        value(metadata.to_string()),
+        number(now),
+    ])
 }
 
 pub async fn storefront(db: &D1Database) -> Result<Value> {
@@ -168,4 +198,16 @@ pub async fn storefront(db: &D1Database) -> Result<Value> {
         sections.push(json!({"id":"games","title":"ゲーム","layout":"row","apps":games}));
     }
     Ok(json!({"featured":[],"sections":sections,"categories":categories}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_uuid_v7_without_system_clock_access() {
+        let identifier = id("audit", 1_700_000_000);
+        let parsed = Uuid::parse_str(identifier.trim_start_matches("audit_")).unwrap();
+        assert_eq!(parsed.get_version_num(), 7);
+    }
 }

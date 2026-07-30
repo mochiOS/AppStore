@@ -1163,29 +1163,38 @@ async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response>
         .find(|(k, _)| k == "status")
         .map(|(_, v)| v.into_owned())
         .unwrap_or_else(|| "submitted".into());
-    let (column, value) = match status.as_str() {
-        "pending" | "submitted" | "approved" | "rejected" => ("review_status", status.as_str()),
-        "draft" | "published" | "revoked" => ("publish_status", status.as_str()),
-        _ => return error("VALIDATION_ERROR", "status is invalid", 422),
-    };
     let (limit, offset) = page(&req);
-    let sql = format!(
-        "SELECT r.*,a.display_name,a.icon_url,a.description
-           FROM releases r LEFT JOIN apps a ON a.bundle_id=r.bundle_id
-          WHERE r.{column}=?1
-            AND (?1!='submitted' OR (r.validation_status='valid' AND r.publish_status='draft'))
-          ORDER BY r.submitted_at DESC,r.created_at DESC LIMIT ?2 OFFSET ?3"
-    );
-    let rows: Vec<Value> = store::rows(
-        &db(&ctx)?,
-        &sql,
-        &[
-            store::value(value),
-            store::number(limit),
-            store::number(offset),
-        ],
-    )
-    .await?;
+    let (sql, bindings) = if status == "queue" {
+        (
+            "SELECT r.*,a.display_name,a.icon_url,a.description
+               FROM releases r LEFT JOIN apps a ON a.bundle_id=r.bundle_id
+              WHERE r.review_status IN ('pending','submitted') AND r.publish_status='draft'
+              ORDER BY COALESCE(r.submitted_at,r.created_at) DESC LIMIT ?1 OFFSET ?2"
+                .to_owned(),
+            vec![store::number(limit), store::number(offset)],
+        )
+    } else {
+        let (column, value) = match status.as_str() {
+            "pending" | "submitted" | "approved" | "rejected" => ("review_status", status.as_str()),
+            "draft" | "published" | "revoked" => ("publish_status", status.as_str()),
+            _ => return error("VALIDATION_ERROR", "status is invalid", 422),
+        };
+        (
+            format!(
+                "SELECT r.*,a.display_name,a.icon_url,a.description
+                   FROM releases r LEFT JOIN apps a ON a.bundle_id=r.bundle_id
+                  WHERE r.{column}=?1
+                    AND (?1!='submitted' OR (r.validation_status='valid' AND r.publish_status='draft'))
+                  ORDER BY r.submitted_at DESC,r.created_at DESC LIMIT ?2 OFFSET ?3"
+            ),
+            vec![
+                store::value(value),
+                store::number(limit),
+                store::number(offset),
+            ],
+        )
+    };
+    let rows: Vec<Value> = store::rows(&db(&ctx)?, &sql, &bindings).await?;
     json_response(&json!({"admin":actor,"status":status,"releases":rows}), 200)
 }
 
@@ -2163,5 +2172,14 @@ mod tests {
                 "accepted mismatched field: {field}"
             );
         }
+    }
+
+    #[test]
+    fn admin_review_queue_includes_validation_pending_releases() {
+        let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(production.contains("status == \"queue\""));
+        assert!(production.contains("review_status IN ('pending','submitted')"));
+        assert!(production.contains("COALESCE(r.submitted_at,r.created_at)"));
     }
 }

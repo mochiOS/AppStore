@@ -464,8 +464,8 @@ async fn developer_apps(req: Request, ctx: RouteContext<()>) -> Result<Response>
     let app_id = id("app");
     let timestamp = now();
     let result = store::run(&db(&ctx)?,
-        "INSERT INTO apps(app_id,bundle_id,developer_id,display_name,subtitle,description,icon_url,category,kind,price_label,age_rating,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?12)",
-        &[store::value(&app_id),store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.display_name.trim()),input.subtitle.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(input.description.trim()),input.icon_url.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),input.category.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(&input.kind),store::value(&input.price_label),input.age_rating.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::number(timestamp)]).await;
+        "INSERT INTO apps(app_id,bundle_id,developer_id,display_name,subtitle,description,icon_url,category,kind,age_rating,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",
+        &[store::value(&app_id),store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.display_name.trim()),input.subtitle.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(input.description.trim()),input.icon_url.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),input.category.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(&input.kind),input.age_rating.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::number(timestamp)]).await;
     if result.is_err() {
         return error("APP_ALREADY_EXISTS", "App already exists", 409);
     }
@@ -534,7 +534,6 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         || input.release_tag.eq_ignore_ascii_case("latest")
         || !input.asset.trim().ends_with(".mpkg")
         || input.certificate_id.trim().is_empty()
-        || input.minimum_mochios_version.trim().is_empty()
     {
         return error("VALIDATION_ERROR", "Release metadata is invalid", 422);
     }
@@ -608,9 +607,9 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
            developer_public_key,developer_certificate_serial,developer_certificate_subject_key_id,
            developer_certificate_developer_id,developer_certificate_issuer_key_id,
            developer_certificate_issuer_public_key,developer_certificate_issuance_source,
-           minimum_mochios_version,changelog,
+           changelog,
            registered_by,registered_by_account_id,developer_display_name,created_at)
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30)",
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
         &[
             store::value(&release_id),
             store::value(&bundle_id),
@@ -639,7 +638,6 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             store::value(&certificate.issuer_key_id),
             store::value(&certificate.issuer_public_key),
             store::value(&certificate.issuance_source),
-            store::value(input.minimum_mochios_version.trim()),
             input
                 .changelog
                 .as_deref()
@@ -811,8 +809,6 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             != value_str(&release, "developer_certificate_developer_id").unwrap_or("")
         || input.certificate_issuer_key_id
             != value_str(&release, "developer_certificate_issuer_key_id").unwrap_or("")
-        || input.minimum_mochios_version
-            != value_str(&release, "minimum_mochios_version").unwrap_or("")
         || asset_sha256.len() != 64
         || hex::decode(&asset_sha256).is_err()
         || package_digest.len() != 64
@@ -1851,6 +1847,48 @@ mod tests {
     #[test]
     fn mpkg_limit_is_bounded() {
         assert_eq!(MAX_PACKAGE_BYTES, 134_217_728);
+    }
+
+    #[test]
+    fn registration_inputs_do_not_accept_price_or_minimum_os() {
+        assert!(
+            serde_json::from_value::<model::AppInput>(json!({
+                "bundle_id": "com.example.testapp",
+                "display_name": "TestApp",
+                "kind": "app"
+            }))
+            .is_ok()
+        );
+        assert!(
+            serde_json::from_value::<model::AppInput>(json!({
+                "bundle_id": "com.example.testapp",
+                "display_name": "TestApp",
+                "kind": "app",
+                "price_label": "入手"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<model::ReleaseInput>(json!({
+                "version": "0.1.0",
+                "repository": "example/testapp",
+                "release_tag": "v0.1.0",
+                "asset": "TestApp.mpkg",
+                "certificate_id": "certificate"
+            }))
+            .is_ok()
+        );
+        assert!(
+            serde_json::from_value::<model::ReleaseInput>(json!({
+                "version": "0.1.0",
+                "repository": "example/testapp",
+                "release_tag": "v0.1.0",
+                "asset": "TestApp.mpkg",
+                "certificate_id": "certificate",
+                "minimum_mochios_version": "0.1.0"
+            }))
+            .is_err()
+        );
     }
 
     #[test]

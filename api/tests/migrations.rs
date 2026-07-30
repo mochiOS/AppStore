@@ -10,6 +10,8 @@ const RELEASE_VALIDATION_REPORTS: &str =
     include_str!("../migrations/0007_release_validation_reports.sql");
 const VALIDATION_ATTEMPT_LEASES: &str =
     include_str!("../migrations/0008_validation_attempt_leases.sql");
+const REMOVE_PRICE_AND_MINIMUM_OS: &str =
+    include_str!("../migrations/0009_remove_price_and_minimum_os.sql");
 
 #[test]
 fn package_suspension_is_reversible() {
@@ -67,6 +69,7 @@ fn validation_report_schema_and_audit_log_are_hardened() {
         PACKAGE_SUSPENSIONS,
         RELEASE_VALIDATION_REPORTS,
         VALIDATION_ATTEMPT_LEASES,
+        REMOVE_PRICE_AND_MINIMUM_OS,
     ] {
         connection
             .execute_batch(migration)
@@ -107,6 +110,19 @@ fn validation_report_schema_and_audit_log_are_hardened() {
             .unwrap();
         assert_eq!(exists, 1, "missing {column}");
     }
+    for (table, column) in [
+        ("apps", "price_label"),
+        ("releases", "minimum_mochios_version"),
+    ] {
+        let exists = connection
+            .query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?1"),
+                [column],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0, "obsolete {table}.{column} remains");
+    }
 }
 
 #[test]
@@ -121,6 +137,7 @@ fn reviewer_lease_suppresses_duplicates_and_binds_results() {
         PACKAGE_SUSPENSIONS,
         RELEASE_VALIDATION_REPORTS,
         VALIDATION_ATTEMPT_LEASES,
+        REMOVE_PRICE_AND_MINIMUM_OS,
     ] {
         connection
             .execute_batch(migration)

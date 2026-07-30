@@ -39,7 +39,7 @@ const PUBLIC_APP_SELECT: &str =
                        WHERE rel.bundle_id=a.bundle_id AND rel.publish_status='published'
                        ORDER BY rel.published_at DESC LIMIT 1), a.developer_id) AS developer,
             a.developer_id, a.description, a.icon_url AS icon, a.subtitle,
-            a.category, a.kind, a.price_label, a.age_rating,
+            a.category, a.kind, a.age_rating,
             CASE WHEN COALESCE(r.rating_count, 0) > 0
                  THEN CAST(r.rating_sum AS REAL) / r.rating_count ELSE NULL END AS rating,
             COALESCE(r.rating_count, 0) AS rating_count
@@ -92,7 +92,7 @@ pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<Rel
                 r.package_digest,
                 r.changelog, r.review_status, r.publish_status, r.download_url,
                 r.github_repository, r.github_release_tag, r.github_asset_id, r.asset_name,
-                r.developer_certificate_id, r.minimum_mochios_version, r.created_at
+                r.developer_certificate_id, r.created_at
            FROM releases r JOIN bundle_ids b ON b.bundle_id=r.bundle_id
           WHERE r.bundle_id=?1 AND b.status='active' AND validation_status='valid'
             AND review_status='approved' AND publish_status='published'

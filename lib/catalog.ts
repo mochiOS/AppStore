@@ -8,7 +8,6 @@ export type CatalogApp = {
   subtitle?: string | null;
   category?: string | null;
   kind?: "app" | "game";
-  price_label?: string | null;
   rating?: number | null;
   rating_count?: number | null;
   age_rating?: string | null;
@@ -69,7 +68,6 @@ const exampleApp: CatalogApp = {
   description: "Example application.",
   icon: null,
   kind: "app",
-  price_label: "入手",
 };
 
 async function request<T>(path: string): Promise<T | null> {

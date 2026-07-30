@@ -48,7 +48,6 @@ App Storeの「見つける」画面は`GET /storefront`の応答から構成し
   "subtitle": "短い説明",
   "category": "カテゴリ名",
   "kind": "app",
-  "price_label": "入手",
   "rating": 4.8,
   "rating_count": 120,
   "age_rating": "4+",

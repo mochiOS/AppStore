@@ -7,6 +7,7 @@ pub struct BundleInput {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AppInput {
     pub bundle_id: String,
     pub display_name: String,
@@ -20,8 +21,6 @@ pub struct AppInput {
     pub category: Option<String>,
     #[serde(default = "default_kind")]
     pub kind: String,
-    #[serde(default = "default_price")]
-    pub price_label: String,
     #[serde(default)]
     pub age_rating: Option<String>,
 }
@@ -29,10 +28,6 @@ pub struct AppInput {
 fn default_kind() -> String {
     "app".into()
 }
-fn default_price() -> String {
-    "入手".into()
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseInput {
@@ -41,7 +36,6 @@ pub struct ReleaseInput {
     pub release_tag: String,
     pub asset: String,
     pub certificate_id: String,
-    pub minimum_mochios_version: String,
     #[serde(default)]
     pub changelog: Option<String>,
 }
@@ -104,7 +98,6 @@ pub struct ValidationInput {
     pub certificate_subject_key_id: String,
     pub certificate_developer_id: String,
     pub certificate_issuer_key_id: String,
-    pub minimum_mochios_version: String,
     pub capabilities: Vec<String>,
     pub payloads: Vec<PayloadReport>,
 }
@@ -181,7 +174,6 @@ pub struct PublicApp {
     pub subtitle: Option<String>,
     pub category: Option<String>,
     pub kind: String,
-    pub price_label: String,
     pub age_rating: Option<String>,
     pub rating: Option<f64>,
     pub rating_count: i64,
@@ -204,6 +196,5 @@ pub struct ReleaseView {
     pub github_asset_id: i64,
     pub asset_name: String,
     pub developer_certificate_id: String,
-    pub minimum_mochios_version: String,
     pub created_at: i64,
 }

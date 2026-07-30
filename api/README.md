@@ -16,7 +16,6 @@ Content-Type: application/json
   "release_tag": "v1.2.0",
   "asset": "texteditor-1.2.0-x86_64.mpkg",
   "certificate_id": "<Developer Certificate ID>",
-  "minimum_mochios_version": "0.1.0",
   "changelog": "変更内容"
 }
 ```

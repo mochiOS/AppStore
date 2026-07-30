@@ -5,7 +5,7 @@ import type { CatalogApp, StorefrontFeature, StorefrontSection } from "@/lib/cat
 import { resolveAssetUrl } from "@/lib/catalog";
 
 export function AppAction({ app }: { app: CatalogApp }) {
-  return <span className="app-action">{app.price_label || "入手"}</span>;
+  return <span className="app-action" aria-label={`${app.name}を入手`}>入手</span>;
 }
 
 export function AppRow({ app, rank }: { app: CatalogApp; rank?: number }) {

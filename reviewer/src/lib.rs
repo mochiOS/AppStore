@@ -41,7 +41,6 @@ pub struct Expectations<'a> {
     pub certificate_subject_key_id: &'a str,
     pub certificate_developer_id: &'a str,
     pub certificate_issuer_key_id: &'a str,
-    pub minimum_mochios_version: &'a str,
     pub public_key: &'a str,
     pub issuer_public_key: &'a [u8; 32],
     pub expected_file_size: u64,
@@ -67,7 +66,6 @@ pub struct ValidationReport {
     pub certificate_subject_key_id: String,
     pub certificate_developer_id: String,
     pub certificate_issuer_key_id: String,
-    pub minimum_mochios_version: String,
     pub capabilities: Vec<String>,
     pub payloads: Vec<PayloadReport>,
 }
@@ -185,7 +183,6 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
         certificate_subject_key_id: expected.certificate_subject_key_id.into(),
         certificate_developer_id: expected.certificate_developer_id.into(),
         certificate_issuer_key_id: expected.certificate_issuer_key_id.into(),
-        minimum_mochios_version: expected.minimum_mochios_version.into(),
         capabilities,
         payloads,
     })
@@ -807,7 +804,6 @@ mod tests {
                     certificate_subject_key_id: subject_value,
                     certificate_developer_id: developer_value,
                     certificate_issuer_key_id: issuer_value,
-                    minimum_mochios_version: "0.1.0",
                     public_key: &public_key,
                     issuer_public_key: issuer_key,
                     expected_file_size: bytes.len() as u64,

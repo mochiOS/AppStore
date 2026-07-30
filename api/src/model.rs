@@ -25,6 +25,23 @@ pub struct AppInput {
     pub age_rating: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppUpdateInput {
+    pub display_name: String,
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub icon_url: Option<String>,
+    #[serde(default)]
+    pub category: Option<String>,
+    pub kind: String,
+    #[serde(default)]
+    pub age_rating: Option<String>,
+}
+
 fn default_kind() -> String {
     "app".into()
 }

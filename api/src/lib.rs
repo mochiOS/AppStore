@@ -97,6 +97,49 @@ fn valid_bundle_id(value: &str) -> bool {
     mochios_certificate::is_valid_package_id(value)
 }
 
+fn valid_optional_text(value: Option<&str>, max_len: usize) -> bool {
+    value.is_none_or(|value| value.trim().len() <= max_len)
+}
+
+fn valid_icon_url(value: Option<&str>) -> bool {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    Url::parse(value).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.fragment().is_none()
+    })
+}
+
+fn valid_app_metadata(
+    display_name: &str,
+    subtitle: Option<&str>,
+    description: &str,
+    icon_url: Option<&str>,
+    category: Option<&str>,
+    kind: &str,
+    age_rating: Option<&str>,
+) -> bool {
+    !display_name.trim().is_empty()
+        && display_name.trim().len() <= 120
+        && description.trim().len() <= 4000
+        && valid_optional_text(subtitle, 160)
+        && valid_optional_text(category, 80)
+        && valid_optional_text(age_rating, 40)
+        && valid_icon_url(icon_url)
+        && matches!(kind, "app" | "game")
+}
+
+fn optional_value(value: Option<&str>) -> worker::wasm_bindgen::JsValue {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map_or(worker::wasm_bindgen::JsValue::NULL, store::value)
+}
+
 fn valid_version(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -474,8 +517,15 @@ async fn developer_apps(req: Request, ctx: RouteContext<()>) -> Result<Response>
     let mut req = req;
     let input: AppInput = req.json().await?;
     if !valid_bundle_id(input.bundle_id.trim())
-        || input.display_name.trim().is_empty()
-        || !matches!(input.kind.as_str(), "app" | "game")
+        || !valid_app_metadata(
+            &input.display_name,
+            input.subtitle.as_deref(),
+            &input.description,
+            input.icon_url.as_deref(),
+            input.category.as_deref(),
+            &input.kind,
+            input.age_rating.as_deref(),
+        )
     {
         return error("VALIDATION_ERROR", "App metadata is invalid", 422);
     }
@@ -491,7 +541,7 @@ async fn developer_apps(req: Request, ctx: RouteContext<()>) -> Result<Response>
     let timestamp = now();
     let result = store::run(&db(&ctx)?,
         "INSERT INTO apps(app_id,bundle_id,developer_id,display_name,subtitle,description,icon_url,category,kind,age_rating,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?11)",
-        &[store::value(&app_id),store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.display_name.trim()),input.subtitle.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(input.description.trim()),input.icon_url.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),input.category.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::value(&input.kind),input.age_rating.as_deref().map_or(worker::wasm_bindgen::JsValue::NULL,store::value),store::number(timestamp)]).await;
+        &[store::value(&app_id),store::value(input.bundle_id.trim()),store::value(&developer),store::value(input.display_name.trim()),optional_value(input.subtitle.as_deref()),store::value(input.description.trim()),optional_value(input.icon_url.as_deref()),optional_value(input.category.as_deref()),store::value(&input.kind),optional_value(input.age_rating.as_deref()),store::number(timestamp)]).await;
     if result.is_err() {
         return error("APP_ALREADY_EXISTS", "App already exists", 409);
     }
@@ -518,15 +568,74 @@ async fn developer_apps(req: Request, ctx: RouteContext<()>) -> Result<Response>
 }
 
 async fn developer_app(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let developer = match require_developer(&req, &ctx.env).await? {
+    if req.method() != Method::Get
+        && let Some(response) =
+            rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "app-metadata").await?
+    {
+        return Ok(response);
+    }
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
         Ok(v) => v,
         Err(r) => return Ok(r),
     };
-    let Some(app) = store::developer_app(&db(&ctx)?, &developer, param(&ctx, "bundle_id")).await?
-    else {
+    let developer = actor.developer_id;
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    let Some(app) = store::developer_app(&database, &developer, bundle_id).await? else {
         return error("APP_NOT_FOUND", "App not found", 404);
     };
-    json_response(&json!({"app":app}), 200)
+    if req.method() == Method::Get {
+        return json_response(&json!({"app":app}), 200);
+    }
+    let mut req = req;
+    let input: AppUpdateInput = req.json().await?;
+    if !valid_app_metadata(
+        &input.display_name,
+        input.subtitle.as_deref(),
+        &input.description,
+        input.icon_url.as_deref(),
+        input.category.as_deref(),
+        &input.kind,
+        input.age_rating.as_deref(),
+    ) {
+        return error("VALIDATION_ERROR", "App metadata is invalid", 422);
+    }
+    let timestamp = now();
+    database
+        .batch(vec![
+            database
+                .prepare(
+                    "UPDATE apps SET display_name=?1,subtitle=?2,description=?3,icon_url=?4,
+                        category=?5,kind=?6,age_rating=?7,updated_at=?8
+                      WHERE developer_id=?9 AND bundle_id=?10",
+                )
+                .bind(&[
+                    store::value(input.display_name.trim()),
+                    optional_value(input.subtitle.as_deref()),
+                    store::value(input.description.trim()),
+                    optional_value(input.icon_url.as_deref()),
+                    optional_value(input.category.as_deref()),
+                    store::value(&input.kind),
+                    optional_value(input.age_rating.as_deref()),
+                    store::number(timestamp),
+                    store::value(&developer),
+                    store::value(bundle_id),
+                ])?,
+            store::audit_statement(
+                &database,
+                Some(&actor.account_id),
+                "app.metadata_update",
+                "app",
+                bundle_id,
+                json!({"developer_id":developer}),
+                timestamp,
+            )?,
+        ])
+        .await?;
+    json_response(
+        &json!({"app":store::developer_app(&database, &developer, bundle_id).await?}),
+        200,
+    )
 }
 
 async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -1764,6 +1873,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v1/developer/apps", developer_apps)
         .post_async("/v1/developer/apps", developer_apps)
         .get_async("/v1/developer/apps/:bundle_id", developer_app)
+        .patch_async("/v1/developer/apps/:bundle_id", developer_app)
         .post_async("/v1/developer/apps/:bundle_id/team", assign_team)
         .get_async(
             "/v1/developer/apps/:bundle_id/releases",
@@ -1912,6 +2022,46 @@ mod tests {
                 "asset": "TestApp.mpkg",
                 "certificate_id": "certificate",
                 "minimum_mochios_version": "0.1.0"
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn app_metadata_updates_are_bounded_and_keep_bundle_ids_immutable() {
+        assert!(valid_app_metadata(
+            "Example",
+            Some("A useful app"),
+            "Description",
+            Some("https://example.com/icon.png"),
+            Some("Utilities"),
+            "app",
+            Some("4+")
+        ));
+        assert!(!valid_app_metadata(
+            "Example",
+            None,
+            "Description",
+            Some("http://example.com/icon.png"),
+            None,
+            "app",
+            None
+        ));
+        assert!(!valid_app_metadata(
+            "",
+            None,
+            "Description",
+            None,
+            None,
+            "application",
+            None
+        ));
+        assert!(
+            serde_json::from_value::<AppUpdateInput>(json!({
+                "bundle_id":"com.example.changed",
+                "display_name":"Example",
+                "description":"Description",
+                "kind":"app"
             }))
             .is_err()
         );

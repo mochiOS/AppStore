@@ -107,6 +107,18 @@ pub struct CertificateIdentity {
     pub issuance_source: String,
 }
 
+fn certificate_serial(value: &serde_json::Value) -> Option<String> {
+    let serial = match value.get("serial_number")? {
+        serde_json::Value::Number(number) => number.as_u64()?,
+        serde_json::Value::String(serial) => {
+            let parsed = serial.parse::<u64>().ok()?;
+            (parsed.to_string() == *serial).then_some(parsed)?
+        }
+        _ => return None,
+    };
+    (serial > 0).then(|| serial.to_string())
+}
+
 pub async fn certificate_identity(
     env: &worker::Env,
     certificate_id: &str,
@@ -125,6 +137,7 @@ pub async fn certificate_identity(
     let valid = value.get("valid").and_then(serde_json::Value::as_bool) == Some(true)
         && string("status") == Some("valid")
         && string("developer_record_id") == Some(developer_record_id);
+    let serial_number = certificate_serial(&value);
     let (
         Some(public_key),
         Some(serial_number),
@@ -135,7 +148,7 @@ pub async fn certificate_identity(
         Some(issuance_source),
     ) = (
         string("subject_public_key").map(str::to_owned),
-        string("serial_number"),
+        serial_number,
         string("subject_key_id"),
         string("developer_id"),
         string("issuer_key_id"),
@@ -161,21 +174,15 @@ pub async fn certificate_identity(
         Some(bytes) => bytes,
         None => return Ok(None),
     };
-    let canonical_serial = serial_number
-        .parse::<u64>()
-        .ok()
-        .filter(|serial| *serial > 0)
-        .map(|serial| serial.to_string());
     let identity_is_consistent = valid
         && mochios_certificate::is_valid_developer_id(developer_id)
         && developer_id == developer_record_id
-        && canonical_serial.as_deref() == Some(serial_number)
         && hex::encode(Sha256::digest(public_key_bytes)) == subject_key_id
         && hex::encode(Sha256::digest(issuer_public_key_bytes)) == issuer_key_id
         && matches!(issuance_source, "legacy_root" | "online_intermediate");
     Ok(identity_is_consistent.then(|| CertificateIdentity {
         public_key,
-        serial_number: serial_number.to_owned(),
+        serial_number,
         subject_key_id: subject_key_id.to_owned(),
         developer_id: developer_id.to_owned(),
         developer_record_id: developer_record_id.to_owned(),
@@ -238,4 +245,25 @@ pub fn reviewer(req: &Request, env: &worker::Env) -> Result<bool> {
     let expected = env.secret("REVIEWER_TOKEN")?.to_string();
     let provided = req.headers().get("X-Reviewer-Token")?.unwrap_or_default();
     Ok(!expected.is_empty() && constant_time_eq(&expected, &provided))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn certificate_serial_accepts_developer_ca_numbers_and_canonical_strings() {
+        assert_eq!(
+            certificate_serial(&json!({"serial_number": 2})).as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            certificate_serial(&json!({"serial_number": "2"})).as_deref(),
+            Some("2")
+        );
+        assert!(certificate_serial(&json!({"serial_number": 0})).is_none());
+        assert!(certificate_serial(&json!({"serial_number": "02"})).is_none());
+        assert!(certificate_serial(&json!({"serial_number": 2.5})).is_none());
+    }
 }

@@ -2,14 +2,19 @@ use std::{
     env,
     fs::File,
     io::{Read, copy},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, bail, ensure};
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use mochios_mpkg_reviewer::{Expectations, MAX_PACKAGE_BYTES, ValidationReport, inspect_mpkg};
 use reqwest::{
-    Url,
+    StatusCode, Url,
     blocking::{Client, Response},
     redirect::{Action, Attempt, Policy},
 };
@@ -18,9 +23,23 @@ use tempfile::NamedTempFile;
 
 #[derive(Parser)]
 #[command(about = "GitHub Releases上のmochiOS .mpkgを安全に検証する")]
+#[command(group(
+    ArgGroup::new("mode")
+        .required(true)
+        .args(["release_id", "queue"])
+))]
 struct Args {
     /// AppStore Release ID
-    release_id: String,
+    release_id: Option<String>,
+    /// 審査待ちReleaseを自動取得して連続処理する
+    #[arg(long)]
+    queue: bool,
+    /// Queueを1回だけ確認し、最大1件を処理して終了する
+    #[arg(long, requires = "queue")]
+    once: bool,
+    /// Queueが空のときの確認間隔（5〜300秒）
+    #[arg(long, default_value_t = 15)]
+    poll_seconds: u64,
     /// AppStore API origin
     #[arg(long, default_value = "https://api.store.mochios.org")]
     api: String,
@@ -82,14 +101,18 @@ struct ValidationFailure<'a> {
     reviewer_version: &'static str,
     validated_at: u64,
     error_code: &'static str,
-    error_summary: String,
+    error_summary: &'a str,
+}
+
+enum ReviewOutcome {
+    Valid { package_id: String, version: String },
+    Invalid { summary: String },
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
     let token =
         env::var("APPSTORE_REVIEWER_TOKEN").context("APPSTORE_REVIEWER_TOKEN is required")?;
-    let unix_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let api = validated_api_origin(&args.api)?;
     let developer_ca = validated_service_origin(&args.developer_ca, "--developer-ca")?;
     let client = Client::builder()
@@ -99,35 +122,74 @@ fn main() -> Result<()> {
         .user_agent("mochiOS-mpkg-reviewer/0.1")
         .build()?;
 
-    let release_url = format!("{api}/v1/admin/releases/{}", args.release_id);
-    let release: ReleaseEnvelope = checked(
+    if args.queue {
+        return run_queue(&args, &client, &api, &developer_ca, &token);
+    }
+    let release_id = args
+        .release_id
+        .as_deref()
+        .context("release ID is required")?;
+    let release = claim_release(&client, &api, &token, release_id)?;
+    match process_release(&client, &api, &developer_ca, &token, &release)? {
+        ReviewOutcome::Valid {
+            package_id,
+            version,
+        } => {
+            println!("validated {package_id} {version} ({release_id})");
+            Ok(())
+        }
+        ReviewOutcome::Invalid { summary } => bail!(summary),
+    }
+}
+
+fn claim_release(client: &Client, api: &str, token: &str, release_id: &str) -> Result<Release> {
+    let release_url = format!("{api}/v1/admin/releases/{release_id}");
+    let envelope: ReleaseEnvelope = checked(
         client
             .get(&release_url)
-            .header("X-Reviewer-Token", &token)
+            .header("X-Reviewer-Token", token)
             .send()?,
     )?
     .json()
     .context("AppStore returned an invalid release response")?;
-    let release = release.release;
+    Ok(envelope.release)
+}
+
+fn claim_next_release(client: &Client, api: &str, token: &str) -> Result<Option<Release>> {
+    let response = client
+        .post(format!("{api}/v1/reviewer/releases/claim"))
+        .header("X-Reviewer-Token", token)
+        .send()
+        .context("AppStore Reviewer queue request failed")?;
+    if response.status() == StatusCode::NO_CONTENT {
+        return Ok(None);
+    }
+    let envelope: ReleaseEnvelope = checked(response)?
+        .json()
+        .context("AppStore returned an invalid Reviewer queue response")?;
+    Ok(Some(envelope.release))
+}
+
+fn process_release(
+    client: &Client,
+    api: &str,
+    developer_ca: &str,
+    token: &str,
+    release: &Release,
+) -> Result<ReviewOutcome> {
+    let unix_time = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let release_url = format!("{api}/v1/admin/releases/{}", release.release_id);
     let validation_url = format!("{release_url}/validate");
-    let report = match review(&client, &developer_ca, &release, unix_time) {
+    let report = match review(client, developer_ca, release, unix_time) {
         Ok(report) => report,
         Err(cause) => {
-            let summary = cause.to_string().chars().take(500).collect::<String>();
-            let error_code = if summary.contains("download") || summary.contains("request failed") {
-                "download_failed"
-            } else if summary.contains("GitHub") || summary.contains("registered") {
-                "asset_mismatch"
-            } else if summary.contains("certificate") || summary.contains("Certificate") {
-                "certificate_invalid"
-            } else {
-                "package_invalid"
-            };
+            let summary = format!("{cause:#}").chars().take(500).collect::<String>();
+            let error_code = validation_error_code(&summary);
             let failure_url = format!("{release_url}/validation-failure");
             checked(
                 client
                     .post(failure_url)
-                    .header("X-Reviewer-Token", &token)
+                    .header("X-Reviewer-Token", token)
                     .json(&ValidationFailure {
                         release_id: &release.release_id,
                         asset_id: release.github_asset_id,
@@ -135,11 +197,11 @@ fn main() -> Result<()> {
                         reviewer_version: env!("CARGO_PKG_VERSION"),
                         validated_at: unix_time,
                         error_code,
-                        error_summary: summary,
+                        error_summary: &summary,
                     })
                     .send()?,
             )?;
-            return Err(cause);
+            return Ok(ReviewOutcome::Invalid { summary });
         }
     };
     checked(
@@ -149,10 +211,108 @@ fn main() -> Result<()> {
             .json(&report)
             .send()?,
     )?;
-    println!(
-        "validated {} {} ({})",
-        report.package_id, report.version, args.release_id
+    Ok(ReviewOutcome::Valid {
+        package_id: report.package_id,
+        version: report.version,
+    })
+}
+
+fn validation_error_code(summary: &str) -> &'static str {
+    if summary.contains("download") || summary.contains("request failed") {
+        "download_failed"
+    } else if summary.contains("GitHub") || summary.contains("registered") {
+        "asset_mismatch"
+    } else if summary.contains("certificate") || summary.contains("Certificate") {
+        "certificate_invalid"
+    } else {
+        "package_invalid"
+    }
+}
+
+fn queue_poll_duration(seconds: u64) -> Result<Duration> {
+    ensure!(
+        (5..=300).contains(&seconds),
+        "--poll-seconds must be between 5 and 300"
     );
+    Ok(Duration::from_secs(seconds))
+}
+
+fn sleep_while_running(duration: Duration, running: &AtomicBool) {
+    let deadline = Instant::now() + duration;
+    while running.load(Ordering::SeqCst) {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        thread::sleep((deadline - now).min(Duration::from_secs(1)));
+    }
+}
+
+fn run_queue(
+    args: &Args,
+    client: &Client,
+    api: &str,
+    developer_ca: &str,
+    token: &str,
+) -> Result<()> {
+    let poll = queue_poll_duration(args.poll_seconds)?;
+    let running = Arc::new(AtomicBool::new(true));
+    let signal = Arc::clone(&running);
+    ctrlc::set_handler(move || signal.store(false, Ordering::SeqCst))
+        .context("failed to install shutdown handler")?;
+    let mut retry_delay = poll;
+    println!(
+        "Reviewer queue started (poll={}s, mode={})",
+        poll.as_secs(),
+        if args.once { "once" } else { "continuous" }
+    );
+
+    while running.load(Ordering::SeqCst) {
+        match claim_next_release(client, api, token) {
+            Ok(Some(release)) => {
+                retry_delay = poll;
+                let release_id = release.release_id.clone();
+                println!("claimed {release_id}");
+                match process_release(client, api, developer_ca, token, &release) {
+                    Ok(ReviewOutcome::Valid {
+                        package_id,
+                        version,
+                    }) => println!("validated {package_id} {version} ({release_id})"),
+                    Ok(ReviewOutcome::Invalid { summary }) => {
+                        eprintln!("rejected {release_id}: {summary}")
+                    }
+                    Err(cause) => {
+                        eprintln!("Reviewer processing failed for {release_id}: {cause:#}");
+                        if args.once {
+                            return Err(cause);
+                        }
+                        sleep_while_running(retry_delay, &running);
+                        retry_delay = (retry_delay * 2).min(Duration::from_secs(300));
+                    }
+                }
+                if args.once {
+                    return Ok(());
+                }
+            }
+            Ok(None) => {
+                retry_delay = poll;
+                if args.once {
+                    println!("Reviewer queue is empty");
+                    return Ok(());
+                }
+                sleep_while_running(poll, &running);
+            }
+            Err(cause) => {
+                if args.once {
+                    return Err(cause);
+                }
+                eprintln!("Reviewer queue request failed: {cause:#}");
+                sleep_while_running(retry_delay, &running);
+                retry_delay = (retry_delay * 2).min(Duration::from_secs(300));
+            }
+        }
+    }
+    println!("Reviewer queue stopped");
     Ok(())
 }
 
@@ -474,5 +634,29 @@ mod tests {
         assert!(validated_service_origin("http://ca.mochios.org", "--ca").is_err());
         assert!(validated_service_origin("http://127.0.0.1:8787", "--ca").is_ok());
         assert!(validated_service_origin("https://ca.mochios.org/base", "--ca").is_err());
+    }
+
+    #[test]
+    fn reviewer_modes_are_explicit_and_queue_polling_is_bounded() {
+        assert!(Args::try_parse_from(["reviewer", "rel_test"]).is_ok());
+        assert!(Args::try_parse_from(["reviewer", "--queue"]).is_ok());
+        assert!(Args::try_parse_from(["reviewer"]).is_err());
+        assert!(Args::try_parse_from(["reviewer", "rel_test", "--queue"]).is_err());
+        assert!(Args::try_parse_from(["reviewer", "--once"]).is_err());
+        assert!(queue_poll_duration(5).is_ok());
+        assert!(queue_poll_duration(300).is_ok());
+        assert!(queue_poll_duration(4).is_err());
+        assert!(queue_poll_duration(301).is_err());
+    }
+
+    #[test]
+    fn validation_failures_use_stable_error_codes() {
+        assert_eq!(validation_error_code("download failed"), "download_failed");
+        assert_eq!(validation_error_code("GitHub mismatch"), "asset_mismatch");
+        assert_eq!(
+            validation_error_code("certificate expired"),
+            "certificate_invalid"
+        );
+        assert_eq!(validation_error_code("invalid manifest"), "package_invalid");
     }
 }

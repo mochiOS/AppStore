@@ -229,6 +229,74 @@ fn reviewer_lease_suppresses_duplicates_and_binds_results() {
 }
 
 #[test]
+fn automatic_reviewer_queue_claims_oldest_available_release() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    for migration in [
+        INITIAL,
+        GITHUB_RELEASES,
+        CERTIFICATE_SERIAL,
+        CERTIFICATE_IDENTITY,
+        UUID_DEVELOPER_IDS,
+        PACKAGE_SUSPENSIONS,
+        RELEASE_VALIDATION_REPORTS,
+        VALIDATION_ATTEMPT_LEASES,
+        REMOVE_PRICE_AND_MINIMUM_OS,
+    ] {
+        connection
+            .execute_batch(migration)
+            .expect("apply migration");
+    }
+    connection.execute_batch(
+        "INSERT INTO bundle_ids VALUES('com.example.testapp','019fad830240772ba6fd5f50596afb4c','TestApp','active',1);
+         INSERT INTO apps(app_id,bundle_id,developer_id,display_name,created_at,updated_at)
+           VALUES('app','com.example.testapp','019fad830240772ba6fd5f50596afb4c','TestApp',1,1);
+         INSERT INTO releases(release_id,bundle_id,version,github_asset_id,file_size,
+           developer_certificate_id,developer_public_key,created_at)
+           VALUES('rel-oldest','com.example.testapp','0.1.0',41,100,'cert','public',1),
+                 ('rel-leased','com.example.testapp','0.2.0',42,100,'cert','public',2),
+                 ('rel-newest','com.example.testapp','0.3.0',43,100,'cert','public',3);
+         UPDATE releases SET validation_attempt_id='active-attempt',validation_started_at=950
+           WHERE release_id='rel-leased';",
+    ).unwrap();
+
+    let claim = "UPDATE releases SET validation_attempt_id=?1,validation_started_at=?2
+          WHERE release_id=(
+            SELECT release_id FROM releases
+             WHERE validation_status='pending' AND review_status='pending'
+               AND publish_status='draft'
+               AND (validation_started_at IS NULL OR validation_started_at<?3)
+             ORDER BY created_at ASC,release_id ASC LIMIT 1
+          )
+            AND validation_status='pending' AND review_status='pending'
+            AND publish_status='draft'
+            AND (validation_started_at IS NULL OR validation_started_at<?3)
+          RETURNING release_id";
+    let first = connection
+        .query_row(claim, ("attempt-a", 1000_i64, 400_i64), |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap();
+    let second = connection
+        .query_row(claim, ("attempt-b", 1001_i64, 401_i64), |row| {
+            row.get::<_, String>(0)
+        })
+        .unwrap();
+
+    assert_eq!(first, "rel-oldest");
+    assert_eq!(second, "rel-newest");
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT validation_attempt_id FROM releases WHERE release_id='rel-leased'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        "active-attempt"
+    );
+}
+
+#[test]
 fn certificate_identity_migration_preserves_legacy_releases() {
     let connection = Connection::open_in_memory().expect("open migration fixture");
     connection

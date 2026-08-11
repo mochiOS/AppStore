@@ -37,6 +37,19 @@ Certificate／Asset不整合: validation=invalid, review=rejected, publish=revok
 
 公開クライアントはAppStore APIから固定SHA-256とdownload URLを取得し、GitHub Releasesから直接MPKGを取得します。
 
+## Reviewer Queue
+
+常駐Reviewerは専用tokenで次のendpointを呼び出します。
+
+```http
+POST /v1/reviewer/releases/claim
+X-Reviewer-Token: <REVIEWER_TOKEN>
+```
+
+未検証Releaseがある場合は、作成日時が最も古い1件へ10分間の一意なvalidation attempt leaseを設定して`200`で返します。Queueが空、または全対象が別Runnerの有効なlease中の場合は`204 No Content`です。取得とlease設定は単一SQLで実行されるため、複数Runner間で同じReleaseをclaimしません。
+
+Runnerは返された`validation_attempt_id`を成功・失敗reportへ含めます。処理中にRunnerが停止した場合はlease期限後に再取得されます。APIの`REVIEWER_TOKEN`とRunnerの`APPSTORE_REVIEWER_TOKEN`は同じ値を設定します。
+
 ## ローカル確認
 
 ```powershell

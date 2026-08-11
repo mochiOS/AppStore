@@ -1,0 +1,50 @@
+name: MPKG Reviewer
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appstore-mpkg-reviewer
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: Review next release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout AppStore
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Restore Cargo cache
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            reviewer/target
+          key: reviewer-${{ runner.os }}-${{ hashFiles('reviewer/Cargo.lock') }}
+
+      - name: Review next pending release
+        env:
+          APPSTORE_REVIEWER_TOKEN: ${{ secrets.APPSTORE_REVIEWER_TOKEN }}
+        run: |
+          if [[ -z "$APPSTORE_REVIEWER_TOKEN" ]]; then
+            echo "APPSTORE_REVIEWER_TOKEN repository secret is not configured." >&2
+            exit 1
+          fi
+          cargo run --locked --release --manifest-path reviewer/Cargo.toml -- --queue --once

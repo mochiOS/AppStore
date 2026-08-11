@@ -889,6 +889,62 @@ async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> 
     }
 }
 
+async fn claim_next_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    match require_reviewer(&req, &ctx.env)? {
+        Ok(()) => {}
+        Err(response) => return Ok(response),
+    }
+    if let Some(response) = rate_limited(&req, &ctx.env, "REVIEWER_RATE_LIMITER", "claim").await? {
+        return Ok(response);
+    }
+
+    let timestamp = now();
+    let attempt_id = id("attempt");
+    let claimed: Option<Value> = store::first(
+        &db(&ctx)?,
+        "UPDATE releases SET validation_attempt_id=?1,validation_started_at=?2
+          WHERE release_id=(
+            SELECT release_id FROM releases
+             WHERE validation_status='pending' AND review_status='pending'
+               AND publish_status='draft'
+               AND (validation_started_at IS NULL OR validation_started_at<?3)
+             ORDER BY created_at ASC,release_id ASC LIMIT 1
+          )
+            AND validation_status='pending' AND review_status='pending'
+            AND publish_status='draft'
+            AND (validation_started_at IS NULL OR validation_started_at<?3)
+          RETURNING *",
+        &[
+            store::value(&attempt_id),
+            store::number(timestamp),
+            store::number(timestamp - 600),
+        ],
+    )
+    .await?;
+    let Some(release) = claimed else {
+        return Ok(Response::empty()?.with_status(204));
+    };
+    let release_id = value_str(&release, "release_id").unwrap_or_default();
+    store::audit(
+        &db(&ctx)?,
+        None,
+        "release.validation_started",
+        "release",
+        release_id,
+        json!({
+            "developer_id": value_str(&release, "registered_by"),
+            "asset_id": release.get("github_asset_id"),
+            "package_id": value_str(&release, "bundle_id"),
+            "validation_attempt_id": attempt_id,
+            "result": "started",
+            "source": "automatic_queue"
+        }),
+        timestamp,
+    )
+    .await?;
+    json_response(&json!({"admin":"mpkg-reviewer","release":release}), 200)
+}
+
 async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if let Some(response) =
         rate_limited(&req, &ctx.env, "REVIEWER_RATE_LIMITER", "validate").await?
@@ -1890,6 +1946,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         )
         .post_async("/v1/developer/apps/:bundle_id/releases", create_release)
         .get_async("/v1/admin/releases", admin_releases)
+        .post_async("/v1/reviewer/releases/claim", claim_next_release)
         .get_async("/v1/admin/releases/:release_id", admin_release)
         .post_async("/v1/admin/releases/:release_id/validate", validate_release)
         .post_async(
@@ -2181,5 +2238,16 @@ mod tests {
         assert!(production.contains("status == \"queue\""));
         assert!(production.contains("review_status IN ('pending','submitted')"));
         assert!(production.contains("COALESCE(r.submitted_at,r.created_at)"));
+    }
+
+    #[test]
+    fn automatic_reviewer_claim_is_authenticated_and_leased() {
+        let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(production.contains("/v1/reviewer/releases/claim"));
+        assert!(production.contains("match require_reviewer(&req, &ctx.env)"));
+        assert!(production.contains("ORDER BY created_at ASC,release_id ASC LIMIT 1"));
+        assert!(production.contains("validation_started_at<?3"));
+        assert!(production.contains("\"source\": \"automatic_queue\""));
     }
 }

@@ -2,7 +2,42 @@
 
 GitHub Releases上の`.mpkg`を一時ファイルへ取得し、展開・実行せずに検証してAppStore管理APIへ報告するネイティブRustツールです。
 
-## 実行
+## 自動実行
+
+本番では`.github/workflows/reviewer.yml`をGitHub Actionsで1時間ごとに実行します。ReviewerはAppStore APIから作成日時の古い未検証Releaseを最大1件取得し、検証結果を報告して終了します。Workflowは外部Pull Requestから起動せず、同時実行も1件に制限しています。
+
+GitHubリポジトリの`Settings` → `Secrets and variables` → `Actions`で、次のRepository Secretを登録してください。
+
+```text
+APPSTORE_REVIEWER_TOKEN = AppStore APIへ設定したREVIEWER_TOKENと同じ値
+```
+
+登録後は`Actions` → `MPKG Reviewer` → `Run workflow`で即時動作確認できます。通常は1時間間隔で自動起動し、Queueが空でも成功終了します。
+
+ローカルで常駐実行する場合はQueueモードを使用します。Reviewerは検証結果を報告したあと次のReleaseへ進みます。
+
+```powershell
+$env:APPSTORE_REVIEWER_TOKEN='<AppStore API REVIEWER_TOKEN>'
+cargo run --release --manifest-path reviewer/Cargo.toml -- --queue
+```
+
+Queueが空の場合は既定で15秒待機します。確認間隔は5〜300秒の範囲で変更できます。
+
+```powershell
+cargo run --release --manifest-path reviewer/Cargo.toml -- --queue --poll-seconds 30
+```
+
+GitHub Actions、タスクスケジューラ、Cronから定期起動する場合は、最大1件を処理して終了するモードを使用します。Queueが空の場合も成功終了します。
+
+```powershell
+cargo run --release --manifest-path reviewer/Cargo.toml -- --queue --once
+```
+
+常駐モードは`Ctrl+C`を受けると現在のHTTP処理後に停止します。Queue取得エラーや結果送信エラーは最大5分まで指数バックオフし、leaseが切れたReleaseは10分後に再取得できます。MPKGの内容が不正な場合は失敗結果をAPIへ保存し、Runner自体は停止せず次のReleaseへ進みます。
+
+同じtokenで複数Runnerを起動できます。APIが単一SQLで最古のReleaseへ10分leaseを設定するため、同じReleaseが同時に割り当てられることはありません。
+
+## 1件を手動実行
 
 ```powershell
 $env:APPSTORE_REVIEWER_TOKEN='<AppStore API REVIEWER_TOKEN>'
@@ -17,7 +52,7 @@ cargo run --manifest-path reviewer/Cargo.toml -- <release_id> --api http://127.0
 
 ReviewerはRelease登録時にDeveloper CAが検証して固定したCertificate identityをAppStore APIから取得します。MPKG内MCERについて次を照合します。
 
-Reviewerは取得開始時に10分間の一意なvalidation attempt leaseを確保します。同じReleaseの並列実行は`409 VALIDATION_ALREADY_RUNNING`で拒否され、成功・失敗reportもそのattempt IDに拘束されます。
+Reviewerは取得開始時に10分間の一意なvalidation attempt leaseを確保します。手動実行で同じReleaseを指定した場合は`409 VALIDATION_ALREADY_RUNNING`で拒否され、成功・失敗reportもそのattempt IDに拘束されます。
 
 - Certificate IDに対応するserial
 - Subject public keyとSubject Key ID

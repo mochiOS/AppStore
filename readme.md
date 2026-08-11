@@ -10,6 +10,7 @@
 - 公開カタログ検索
 - 評価、スクリーンショットを含むアプリ詳細
 - GitHub Releases上の固定`.mpkg` assetを使うRelease一覧と直接ダウンロード
+- 審査待ちReleaseを排他的に取得する自動MPKG Reviewer Queue
 - アプリアイコン画像の表示
 - デスクトップ／モバイル対応
 - Cloudflare Workers向けOpenNext設定
@@ -71,6 +72,19 @@ npx opennextjs-cloudflare build
 npx wrangler deploy --dry-run
 npm run reviewer:check
 npm run reviewer:test
+```
+
+本番Reviewer RunnerはGitHub Actionsが1時間ごとに最大1件処理します。AppStoreリポジトリのRepository Secretに、AppStore APIの`REVIEWER_TOKEN`と同じ値を設定してください。
+
+```text
+APPSTORE_REVIEWER_TOKEN
+```
+
+手動実行はGitHubの`Actions` → `MPKG Reviewer` → `Run workflow`から行えます。ローカルで常駐させる場合は次を実行します。
+
+```powershell
+$env:APPSTORE_REVIEWER_TOKEN='<AppStore API REVIEWER_TOKEN>'
+cargo run --release --manifest-path reviewer/Cargo.toml -- --queue
 ```
 
 MPKG形式と署名対象は[docs/appbundle.md](docs/appbundle.md)、審査ツールは[reviewer/README.md](reviewer/README.md)を参照してください。

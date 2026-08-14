@@ -14,6 +14,7 @@ const REMOVE_PRICE_AND_MINIMUM_OS: &str =
     include_str!("../migrations/0009_remove_price_and_minimum_os.sql");
 const BACKFILL_BUNDLE_RESERVATION_AUDITS: &str =
     include_str!("../migrations/0010_backfill_bundle_reservation_audits.sql");
+const NOTIFICATION_READS: &str = include_str!("../migrations/0011_notification_reads.sql");
 
 #[test]
 fn package_suspension_is_reversible() {
@@ -73,6 +74,7 @@ fn validation_report_schema_and_audit_log_are_hardened() {
         VALIDATION_ATTEMPT_LEASES,
         REMOVE_PRICE_AND_MINIMUM_OS,
         BACKFILL_BUNDLE_RESERVATION_AUDITS,
+        NOTIFICATION_READS,
     ] {
         connection
             .execute_batch(migration)
@@ -126,6 +128,49 @@ fn validation_report_schema_and_audit_log_are_hardened() {
             .unwrap();
         assert_eq!(exists, 0, "obsolete {table}.{column} remains");
     }
+}
+
+#[test]
+fn notification_reads_are_scoped_per_account_and_reference_audits() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    connection.execute_batch(INITIAL).unwrap();
+    connection
+        .execute_batch(RELEASE_VALIDATION_REPORTS)
+        .unwrap();
+    connection.execute_batch(NOTIFICATION_READS).unwrap();
+    connection
+        .execute(
+            "INSERT INTO audit_logs VALUES('audit-one',NULL,'release.validation_failed','release','rel-one','{}',1)",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO notification_reads VALUES('audit-one','account-a',2)",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO notification_reads VALUES('audit-one','account-b',3)",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row("SELECT COUNT(*) FROM notification_reads", [], |row| row
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO notification_reads VALUES('missing','account-a',4)",
+                []
+            )
+            .is_err()
+    );
 }
 
 #[test]

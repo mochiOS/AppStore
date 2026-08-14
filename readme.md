@@ -11,6 +11,8 @@
 - 評価、スクリーンショットを含むアプリ詳細
 - GitHub Releases上の固定`.mpkg` assetを使うRelease一覧と直接ダウンロード
 - 審査待ちReleaseを排他的に取得する自動MPKG Reviewer Queue
+- Developer／運営者向け通知、Account単位の未読管理
+- アプリ／Releaseごとのappend-only変更履歴
 - アプリアイコン画像の表示
 - デスクトップ／モバイル対応
 - Cloudflare Workers向けOpenNext設定

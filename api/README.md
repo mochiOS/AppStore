@@ -50,6 +50,26 @@ X-Reviewer-Token: <REVIEWER_TOKEN>
 
 Runnerは返された`validation_attempt_id`を成功・失敗reportへ含めます。処理中にRunnerが停止した場合はlease期限後に再取得されます。APIの`REVIEWER_TOKEN`とRunnerの`APPSTORE_REVIEWER_TOKEN`は同じ値を設定します。
 
+## 通知と履歴
+
+Release検証、審査、公開停止、Package停止・再開の通知は、append-onlyの`audit_logs`から生成します。通知本文を別テーブルへ複製しないため、通知機能追加前の過去の問題も表示できます。既読状態だけを`notification_reads`へAccount単位で保存します。
+
+```text
+GET  /v1/developer/notifications
+POST /v1/developer/notifications/{notification_id}/read
+POST /v1/developer/notifications/read-all
+GET  /v1/developer/apps/{bundle_id}/history
+
+GET  /v1/admin/notifications
+POST /v1/admin/notifications/{notification_id}/read
+POST /v1/admin/notifications/read-all
+GET  /v1/admin/releases/{release_id}/history
+```
+
+Developer向けAPIは認証中のDeveloperに属するRelease／Packageだけを返し、運営者向けAPIは`ADMIN_TOKEN`と管理Account IDを要求します。既読状態はDeveloper単位ではなくAccount単位なので、同じDeveloperの各メンバーが個別に管理できます。
+
+`download_failed`と`reviewer_internal_error`は運用障害として分類し、開発者へ再提出を要求しません。Package、署名、Certificate、GitHub assetの不整合は開発者の対応が必要な検証結果として表示します。
+
 ## ローカル確認
 
 ```powershell

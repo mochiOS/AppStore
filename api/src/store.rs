@@ -140,6 +140,249 @@ pub async fn release_by_id(db: &D1Database, release_id: &str) -> Result<Option<V
     .await
 }
 
+const DEVELOPER_NOTIFICATION_ACTIONS: &str =
+    "'release.validation_succeeded','release.validation_failed','release.approve',
+     'release.reject','release.withdraw','package.suspend','package.restore'";
+
+const OPERATOR_NOTIFICATION_ACTIONS: &str =
+    "'release.validation_succeeded','release.validation_failed','release.withdraw'";
+
+pub async fn developer_notifications(
+    db: &D1Database,
+    developer_id: &str,
+    account_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Value>> {
+    rows(
+        db,
+        &format!(
+            "SELECT a.audit_id AS notification_id,a.action,a.target_type,a.target_id,
+                    a.metadata_json,a.created_at,n.read_at
+               FROM audit_logs a
+               LEFT JOIN notification_reads n
+                 ON n.notification_id=a.audit_id AND n.account_id=?2
+              WHERE a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
+                AND ((a.target_type='release' AND EXISTS(
+                       SELECT 1 FROM releases r
+                        WHERE r.release_id=a.target_id AND r.registered_by=?1))
+                  OR (a.target_type='package' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))
+              ORDER BY a.created_at DESC,a.audit_id DESC LIMIT ?3 OFFSET ?4"
+        ),
+        &[
+            value(developer_id),
+            value(account_id),
+            number(limit),
+            number(offset),
+        ],
+    )
+    .await
+}
+
+pub async fn developer_unread_count(
+    db: &D1Database,
+    developer_id: &str,
+    account_id: &str,
+) -> Result<i64> {
+    let row: Option<Value> = first(
+        db,
+        &format!(
+            "SELECT COUNT(*) AS count
+               FROM audit_logs a
+              WHERE a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
+                AND NOT EXISTS(SELECT 1 FROM notification_reads n
+                                WHERE n.notification_id=a.audit_id AND n.account_id=?2)
+                AND ((a.target_type='release' AND EXISTS(
+                       SELECT 1 FROM releases r
+                        WHERE r.release_id=a.target_id AND r.registered_by=?1))
+                  OR (a.target_type='package' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))"
+        ),
+        &[value(developer_id), value(account_id)],
+    )
+    .await?;
+    Ok(row
+        .and_then(|value| {
+            value.get("count").and_then(Value::as_i64).or_else(|| {
+                value
+                    .get("count")
+                    .and_then(Value::as_f64)
+                    .map(|value| value as i64)
+            })
+        })
+        .unwrap_or(0))
+}
+
+pub async fn operator_notifications(
+    db: &D1Database,
+    account_id: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Value>> {
+    rows(
+        db,
+        &format!(
+            "SELECT a.audit_id AS notification_id,a.action,a.target_type,a.target_id,
+                    a.metadata_json,a.created_at,n.read_at
+               FROM audit_logs a
+               LEFT JOIN notification_reads n
+                 ON n.notification_id=a.audit_id AND n.account_id=?1
+              WHERE a.action IN ({OPERATOR_NOTIFICATION_ACTIONS})
+              ORDER BY a.created_at DESC,a.audit_id DESC LIMIT ?2 OFFSET ?3"
+        ),
+        &[value(account_id), number(limit), number(offset)],
+    )
+    .await
+}
+
+pub async fn operator_unread_count(db: &D1Database, account_id: &str) -> Result<i64> {
+    let row: Option<Value> = first(
+        db,
+        &format!(
+            "SELECT COUNT(*) AS count FROM audit_logs a
+              WHERE a.action IN ({OPERATOR_NOTIFICATION_ACTIONS})
+                AND NOT EXISTS(SELECT 1 FROM notification_reads n
+                                WHERE n.notification_id=a.audit_id AND n.account_id=?1)"
+        ),
+        &[value(account_id)],
+    )
+    .await?;
+    Ok(row
+        .and_then(|value| {
+            value.get("count").and_then(Value::as_i64).or_else(|| {
+                value
+                    .get("count")
+                    .and_then(Value::as_f64)
+                    .map(|value| value as i64)
+            })
+        })
+        .unwrap_or(0))
+}
+
+pub async fn mark_developer_notification_read(
+    db: &D1Database,
+    notification_id: &str,
+    developer_id: &str,
+    account_id: &str,
+    now: i64,
+) -> Result<bool> {
+    let marked: Option<Value> = first(
+        db,
+        &format!(
+            "INSERT INTO notification_reads(notification_id,account_id,read_at)
+             SELECT a.audit_id,?3,?4 FROM audit_logs a
+              WHERE a.audit_id=?1 AND a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
+                AND ((a.target_type='release' AND EXISTS(
+                       SELECT 1 FROM releases r
+                        WHERE r.release_id=a.target_id AND r.registered_by=?2))
+                  OR (a.target_type='package' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id=?2)))
+             ON CONFLICT(notification_id,account_id) DO UPDATE SET read_at=excluded.read_at
+             RETURNING notification_id"
+        ),
+        &[
+            value(notification_id),
+            value(developer_id),
+            value(account_id),
+            number(now),
+        ],
+    )
+    .await?;
+    Ok(marked.is_some())
+}
+
+pub async fn mark_all_developer_notifications_read(
+    db: &D1Database,
+    developer_id: &str,
+    account_id: &str,
+    now: i64,
+) -> Result<()> {
+    run(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO notification_reads(notification_id,account_id,read_at)
+             SELECT a.audit_id,?2,?3 FROM audit_logs a
+              WHERE a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
+                AND ((a.target_type='release' AND EXISTS(
+                       SELECT 1 FROM releases r
+                        WHERE r.release_id=a.target_id AND r.registered_by=?1))
+                  OR (a.target_type='package' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))"
+        ),
+        &[value(developer_id), value(account_id), number(now)],
+    )
+    .await
+}
+
+pub async fn mark_operator_notification_read(
+    db: &D1Database,
+    notification_id: &str,
+    account_id: &str,
+    now: i64,
+) -> Result<bool> {
+    let marked: Option<Value> = first(
+        db,
+        &format!(
+            "INSERT INTO notification_reads(notification_id,account_id,read_at)
+             SELECT a.audit_id,?2,?3 FROM audit_logs a
+              WHERE a.audit_id=?1 AND a.action IN ({OPERATOR_NOTIFICATION_ACTIONS})
+             ON CONFLICT(notification_id,account_id) DO UPDATE SET read_at=excluded.read_at
+             RETURNING notification_id"
+        ),
+        &[value(notification_id), value(account_id), number(now)],
+    )
+    .await?;
+    Ok(marked.is_some())
+}
+
+pub async fn mark_all_operator_notifications_read(
+    db: &D1Database,
+    account_id: &str,
+    now: i64,
+) -> Result<()> {
+    run(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO notification_reads(notification_id,account_id,read_at)
+             SELECT a.audit_id,?1,?2 FROM audit_logs a
+              WHERE a.action IN ({OPERATOR_NOTIFICATION_ACTIONS})"
+        ),
+        &[value(account_id), number(now)],
+    )
+    .await
+}
+
+pub async fn app_history(db: &D1Database, bundle_id: &str) -> Result<Vec<Value>> {
+    rows(
+        db,
+        "SELECT audit_id,action,target_type,target_id,metadata_json,created_at
+           FROM audit_logs a
+          WHERE (a.target_id=?1 AND a.target_type IN ('bundle_id','app','package'))
+             OR (a.target_type='release' AND EXISTS(
+                  SELECT 1 FROM releases r
+                   WHERE r.release_id=a.target_id AND r.bundle_id=?1))
+          ORDER BY created_at DESC,audit_id DESC LIMIT 100",
+        &[value(bundle_id)],
+    )
+    .await
+}
+
+pub async fn release_history(db: &D1Database, release_id: &str) -> Result<Vec<Value>> {
+    rows(
+        db,
+        "SELECT audit_id,action,target_type,target_id,metadata_json,created_at
+           FROM audit_logs WHERE target_type='release' AND target_id=?1
+          ORDER BY created_at DESC,audit_id DESC LIMIT 100",
+        &[value(release_id)],
+    )
+    .await
+}
+
 pub async fn audit(
     db: &D1Database,
     actor: Option<&str>,

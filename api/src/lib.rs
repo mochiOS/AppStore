@@ -148,6 +148,14 @@ fn valid_version(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
 }
 
+fn valid_notification_id(value: &str) -> bool {
+    value.starts_with("audit_")
+        && value.len() <= 160
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
 fn github_repository(value: &str) -> Option<(&str, &str)> {
     let (owner, repository) = value.split_once('/')?;
     let valid = |part: &str, max: usize| {
@@ -828,6 +836,181 @@ async fn list_developer_releases(req: Request, ctx: RouteContext<()>) -> Result<
     json_response(&json!({"bundle_id":bundle_id,"releases":rows}), 200)
 }
 
+async fn developer_notifications(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let (limit, offset) = page(&req);
+    let database = db(&ctx)?;
+    let notifications = store::developer_notifications(
+        &database,
+        &actor.developer_id,
+        &actor.account_id,
+        limit,
+        offset,
+    )
+    .await?;
+    let unread_count =
+        store::developer_unread_count(&database, &actor.developer_id, &actor.account_id).await?;
+    json_response(
+        &json!({
+            "developer_id":actor.developer_id,
+            "notifications":notifications,
+            "unread_count":unread_count
+        }),
+        200,
+    )
+}
+
+async fn read_developer_notification(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "notification-read").await?
+    {
+        return Ok(response);
+    }
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let notification_id = param(&ctx, "notification_id");
+    if !valid_notification_id(notification_id) {
+        return error("NOTIFICATION_ID_INVALID", "Notification ID is invalid", 422);
+    }
+    if !store::mark_developer_notification_read(
+        &db(&ctx)?,
+        notification_id,
+        &actor.developer_id,
+        &actor.account_id,
+        now(),
+    )
+    .await?
+    {
+        return error("NOTIFICATION_NOT_FOUND", "Notification not found", 404);
+    }
+    Ok(Response::empty()?.with_status(204))
+}
+
+async fn read_all_developer_notifications(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(
+        &req,
+        &ctx.env,
+        "MUTATION_RATE_LIMITER",
+        "notifications-read-all",
+    )
+    .await?
+    {
+        return Ok(response);
+    }
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    store::mark_all_developer_notifications_read(
+        &db(&ctx)?,
+        &actor.developer_id,
+        &actor.account_id,
+        now(),
+    )
+    .await?;
+    Ok(Response::empty()?.with_status(204))
+}
+
+async fn developer_app_history(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    if store::developer_app(&database, &actor.developer_id, bundle_id)
+        .await?
+        .is_none()
+    {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    }
+    json_response(
+        &json!({"bundle_id":bundle_id,"history":store::app_history(&database,bundle_id).await?}),
+        200,
+    )
+}
+
+async fn admin_notifications(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let (limit, offset) = page(&req);
+    let database = db(&ctx)?;
+    json_response(
+        &json!({
+            "notifications":store::operator_notifications(&database,&actor,limit,offset).await?,
+            "unread_count":store::operator_unread_count(&database,&actor).await?
+        }),
+        200,
+    )
+}
+
+async fn read_admin_notification(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(
+        &req,
+        &ctx.env,
+        "MUTATION_RATE_LIMITER",
+        "admin-notification-read",
+    )
+    .await?
+    {
+        return Ok(response);
+    }
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let notification_id = param(&ctx, "notification_id");
+    if !valid_notification_id(notification_id) {
+        return error("NOTIFICATION_ID_INVALID", "Notification ID is invalid", 422);
+    }
+    if !store::mark_operator_notification_read(&db(&ctx)?, notification_id, &actor, now()).await? {
+        return error("NOTIFICATION_NOT_FOUND", "Notification not found", 404);
+    }
+    Ok(Response::empty()?.with_status(204))
+}
+
+async fn read_all_admin_notifications(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) = rate_limited(
+        &req,
+        &ctx.env,
+        "MUTATION_RATE_LIMITER",
+        "admin-notifications-read-all",
+    )
+    .await?
+    {
+        return Ok(response);
+    }
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    store::mark_all_operator_notifications_read(&db(&ctx)?, &actor, now()).await?;
+    Ok(Response::empty()?.with_status(204))
+}
+
+async fn admin_release_history(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(value) => value,
+        Err(response) => return Ok(response),
+    };
+    let release_id = param(&ctx, "release_id");
+    let database = db(&ctx)?;
+    if store::release_by_id(&database, release_id).await?.is_none() {
+        return error("RELEASE_NOT_FOUND", "Release not found", 404);
+    }
+    json_response(
+        &json!({"admin":actor,"release_id":release_id,"history":store::release_history(&database,release_id).await?}),
+        200,
+    )
+}
+
 async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let release_id = param(&ctx, "release_id");
     if auth::reviewer(&req, &ctx.env)? {
@@ -1198,7 +1381,7 @@ async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<R
         "release.validation_failed",
         "release",
         release_id,
-        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":expected_asset_id,"package_id":value_str(&release,"bundle_id"),"validation_attempt_id":input.validation_attempt_id,"result":"invalid","reason_code":input.error_code}),
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":expected_asset_id,"package_id":value_str(&release,"bundle_id"),"validation_attempt_id":input.validation_attempt_id,"result":"invalid","reason_code":input.error_code,"summary":input.error_summary}),
         timestamp,
     )
     .await?;
@@ -1382,7 +1565,7 @@ async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
         "release.reject",
         "release",
         release_id,
-        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"rejected","reason_code":input.reason_code}),
+        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"rejected","reason_code":input.reason_code,"note":input.note}),
         timestamp,
     )
     .await?;
@@ -1945,9 +2128,35 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             list_developer_releases,
         )
         .post_async("/v1/developer/apps/:bundle_id/releases", create_release)
+        .get_async(
+            "/v1/developer/apps/:bundle_id/history",
+            developer_app_history,
+        )
+        .get_async("/v1/developer/notifications", developer_notifications)
+        .post_async(
+            "/v1/developer/notifications/read-all",
+            read_all_developer_notifications,
+        )
+        .post_async(
+            "/v1/developer/notifications/:notification_id/read",
+            read_developer_notification,
+        )
         .get_async("/v1/admin/releases", admin_releases)
+        .get_async("/v1/admin/notifications", admin_notifications)
+        .post_async(
+            "/v1/admin/notifications/read-all",
+            read_all_admin_notifications,
+        )
+        .post_async(
+            "/v1/admin/notifications/:notification_id/read",
+            read_admin_notification,
+        )
         .post_async("/v1/reviewer/releases/claim", claim_next_release)
         .get_async("/v1/admin/releases/:release_id", admin_release)
+        .get_async(
+            "/v1/admin/releases/:release_id/history",
+            admin_release_history,
+        )
         .post_async("/v1/admin/releases/:release_id/validate", validate_release)
         .post_async(
             "/v1/admin/releases/:release_id/validation-failure",
@@ -2249,5 +2458,19 @@ mod tests {
         assert!(production.contains("ORDER BY created_at ASC,release_id ASC LIMIT 1"));
         assert!(production.contains("validation_started_at<?3"));
         assert!(production.contains("\"source\": \"automatic_queue\""));
+    }
+
+    #[test]
+    fn notification_and_history_routes_keep_developer_and_operator_scopes_separate() {
+        let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(valid_notification_id("audit_019f9d57"));
+        assert!(!valid_notification_id("../audit"));
+        assert!(production.contains("/v1/developer/notifications/:notification_id/read"));
+        assert!(production.contains("require_developer_actor(&req, &ctx.env)"));
+        assert!(production.contains("/v1/admin/notifications/:notification_id/read"));
+        assert!(production.contains("require_admin(&req, &ctx.env)"));
+        assert!(production.contains("/v1/developer/apps/:bundle_id/history"));
+        assert!(production.contains("/v1/admin/releases/:release_id/history"));
     }
 }

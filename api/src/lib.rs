@@ -1,6 +1,7 @@
 mod auth;
 mod model;
 mod store;
+pub mod workflow;
 
 use std::collections::HashMap;
 

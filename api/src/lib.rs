@@ -1,4 +1,5 @@
 mod auth;
+mod media;
 mod model;
 mod store;
 pub mod workflow;
@@ -10,6 +11,7 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use ed25519_dalek::{Signature, VerifyingKey};
+use futures_util::StreamExt;
 use model::*;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -107,12 +109,80 @@ fn valid_icon_url(value: Option<&str>) -> bool {
         return true;
     };
     Url::parse(value).is_ok_and(|url| {
+        let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
         url.scheme() == "https"
-            && url.host_str().is_some()
+            && !host.is_empty()
+            && host != "localhost"
+            && !host.ends_with(".localhost")
+            && !host.ends_with(".local")
+            && !host.ends_with(".internal")
+            && host.parse::<std::net::IpAddr>().is_err()
             && url.username().is_empty()
             && url.password().is_none()
             && url.fragment().is_none()
     })
+}
+
+async fn remote_image(url: &str) -> Result<Option<media::ImageInfo>> {
+    let headers = Headers::new();
+    headers.set("Accept", "image/png, image/jpeg")?;
+    headers.set(
+        "Range",
+        &format!("bytes=0-{}", media::MAX_INSPECTION_BYTES - 1),
+    )?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get).with_headers(headers);
+    let request = Request::new_with_init(url, &init)?;
+    let mut response = match Fetch::Request(request).send().await {
+        Ok(response) => response,
+        Err(_) => return Ok(None),
+    };
+    if !matches!(response.status_code(), 200 | 206)
+        || response
+            .headers()
+            .get("Content-Length")?
+            .and_then(|value| value.parse::<usize>().ok())
+            .is_some_and(|length| length > media::MAX_INSPECTION_BYTES)
+    {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    match response.stream() {
+        Ok(mut stream) => {
+            while let Some(chunk) = stream.next().await {
+                let mut chunk = chunk?;
+                if bytes.len() + chunk.len() > media::MAX_INSPECTION_BYTES {
+                    return Ok(None);
+                }
+                bytes.append(&mut chunk);
+            }
+        }
+        Err(_) => {
+            bytes = response.bytes().await?;
+            if bytes.len() > media::MAX_INSPECTION_BYTES {
+                return Ok(None);
+            }
+        }
+    }
+    Ok(media::inspect(&bytes))
+}
+
+async fn valid_submission_media(input: &SubmissionDraftInput) -> Result<bool> {
+    let Some(icon) = remote_image(&input.icon_url).await? else {
+        return Ok(false);
+    };
+    if icon.media_type != input.icon_media_type
+        || icon.width != input.icon_width
+        || icon.height != input.icon_height
+    {
+        return Ok(false);
+    }
+    for screenshot in &input.screenshots {
+        if remote_image(&screenshot.image_url).await?.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn valid_app_metadata(
@@ -490,29 +560,21 @@ async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .query_pairs()
         .find(|(key, _)| key == "version")
         .map(|(_, value)| value.into_owned());
-    let release: Option<Value> = store::first(
-        &db(&ctx)?,
-        "SELECT r.download_url FROM releases r JOIN bundle_ids b ON b.bundle_id=r.bundle_id
-          WHERE r.bundle_id=?1 AND b.status='active' AND review_status='approved' AND publish_status='published'
-            AND validation_status='valid' AND download_url IS NOT NULL
-            AND sha256 IS NOT NULL AND signature IS NOT NULL
-            AND (?2 IS NULL OR version=?2)
-          ORDER BY published_at DESC LIMIT 1",
-        &[
-            store::value(bundle_id),
+    if store::public_app(&db(&ctx)?, bundle_id).await?.is_none() {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    }
+    let release = store::public_releases(&db(&ctx)?, bundle_id)
+        .await?
+        .into_iter()
+        .find(|release| {
             version
                 .as_deref()
-                .map_or(worker::wasm_bindgen::JsValue::NULL, store::value),
-        ],
-    )
-    .await?;
+                .is_none_or(|value| release.version == value)
+        });
     let Some(release) = release else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
     };
-    redirect_to(
-        value_str(&release, "download_url").unwrap_or(""),
-        "public, max-age=300",
-    )
+    redirect_to(&release.download_url, "public, max-age=300")
 }
 
 async fn bundle_ids(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -950,6 +1012,13 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
             422,
         );
     }
+    if !valid_submission_media(&input).await? {
+        return error(
+            "SUBMISSION_MEDIA_INVALID",
+            "Icon and screenshots must be reachable PNG or JPEG images; the icon must be exactly 512 by 512 pixels",
+            422,
+        );
+    }
     let Some(build) = store::first::<Value>(
         &database,
         "SELECT build_id,version,capabilities_json FROM app_builds WHERE build_id=?1 AND app_id=?2",
@@ -1077,6 +1146,13 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
         return error(
             "SUBMISSION_INVALID",
             "Submission information is invalid",
+            422,
+        );
+    }
+    if !valid_submission_media(&input).await? {
+        return error(
+            "SUBMISSION_MEDIA_INVALID",
+            "Icon and screenshots must be reachable PNG or JPEG images; the icon must be exactly 512 by 512 pixels",
             422,
         );
     }
@@ -3665,6 +3741,9 @@ mod tests {
             "app",
             None
         ));
+        assert!(!valid_icon_url(Some("https://127.0.0.1/icon.png")));
+        assert!(!valid_icon_url(Some("https://service.internal/icon.png")));
+        assert!(!valid_icon_url(Some("https://localhost/icon.png")));
         assert!(!valid_app_metadata(
             "",
             None,

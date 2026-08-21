@@ -39,17 +39,22 @@ pub async fn run(db: &D1Database, sql: &str, params: &[JsValue]) -> Result<()> {
     Ok(())
 }
 
-const PUBLIC_APP_SELECT: &str =
-    "SELECT a.bundle_id, a.display_name AS name, COALESCE(a.latest_version, '') AS version,
-            COALESCE((SELECT rel.developer_display_name FROM releases rel
+const PUBLIC_APP_SELECT: &str = "SELECT a.bundle_id, COALESCE(d.app_name,a.display_name) AS name,
+            COALESCE(s.version,a.latest_version,'') AS version,
+            COALESCE(d.developer_name,(SELECT rel.developer_display_name FROM releases rel
                        WHERE rel.bundle_id=a.bundle_id AND rel.publish_status='published'
-                       ORDER BY rel.published_at DESC LIMIT 1), a.developer_id) AS developer,
-            a.developer_id, a.description, a.icon_url AS icon, a.subtitle,
-            a.category, a.kind, a.age_rating,
+                       ORDER BY rel.published_at DESC LIMIT 1),a.developer_id) AS developer,
+            a.developer_id,COALESCE(d.description,a.description) AS description,
+            COALESCE(d.icon_url,a.icon_url) AS icon,a.subtitle,
+            COALESCE(d.category,a.category) AS category,COALESCE(d.kind,a.kind) AS kind,
+            COALESCE(d.age_rating,a.age_rating) AS age_rating,
             CASE WHEN COALESCE(r.rating_count, 0) > 0
                  THEN CAST(r.rating_sum AS REAL) / r.rating_count ELSE NULL END AS rating,
             COALESCE(r.rating_count, 0) AS rating_count
        FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
+       LEFT JOIN app_availability v ON v.app_id=a.app_id
+       LEFT JOIN submissions s ON s.submission_id=v.current_submission_id
+       LEFT JOIN submission_details d ON d.submission_id=s.submission_id
        LEFT JOIN ratings r ON r.bundle_id = a.bundle_id";
 
 pub async fn public_apps(
@@ -62,11 +67,14 @@ pub async fn public_apps(
 ) -> Result<Vec<PublicApp>> {
     let sql = format!(
         "{PUBLIC_APP_SELECT}
-          WHERE a.visibility='public' AND b.status='active'
-            AND (?1 IS NULL OR a.kind=?1)
-            AND (?2 IS NULL OR a.category=?2)
-            AND (?3 IS NULL OR a.display_name LIKE '%' || ?3 || '%' OR a.description LIKE '%' || ?3 || '%' OR a.developer_id LIKE '%' || ?3 || '%')
-          ORDER BY a.updated_at DESC LIMIT ?4 OFFSET ?5"
+          WHERE (v.status='available' OR (v.app_id IS NULL AND a.visibility='public'))
+            AND b.status='active'
+            AND (?1 IS NULL OR COALESCE(d.kind,a.kind)=?1)
+            AND (?2 IS NULL OR COALESCE(d.category,a.category)=?2)
+            AND (?3 IS NULL OR COALESCE(d.app_name,a.display_name) LIKE '%' || ?3 || '%'
+              OR COALESCE(d.description,a.description) LIKE '%' || ?3 || '%'
+              OR a.developer_id LIKE '%' || ?3 || '%')
+          ORDER BY COALESCE(v.changed_at,a.updated_at) DESC LIMIT ?4 OFFSET ?5"
     );
     rows(
         db,
@@ -85,7 +93,7 @@ pub async fn public_apps(
 pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<PublicApp>> {
     first(
         db,
-        &format!("{PUBLIC_APP_SELECT} WHERE a.visibility='public' AND b.status='active' AND a.bundle_id=?1 LIMIT 1"),
+        &format!("{PUBLIC_APP_SELECT} WHERE (v.status='available' OR (v.app_id IS NULL AND a.visibility='public')) AND b.status='active' AND a.bundle_id=?1 LIMIT 1"),
         &[value(bundle_id)],
     )
     .await
@@ -94,16 +102,26 @@ pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<Publi
 pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
     rows(
         db,
-        "SELECT r.release_id, r.bundle_id, r.version, r.file_size AS size, r.sha256,
-                r.package_digest,
-                r.changelog, r.review_status, r.publish_status, r.download_url,
-                r.github_repository, r.github_release_tag, r.github_asset_id, r.asset_name,
-                r.developer_certificate_id, r.created_at
+        "SELECT b.build_id AS release_id,a.bundle_id,b.version,b.file_size AS size,b.sha256,
+                b.package_digest,NULL AS changelog,'approved' AS review_status,
+                'published' AS publish_status,b.download_url,b.github_repository,
+                b.github_release_tag,b.github_asset_id,b.asset_name,
+                b.certificate_id AS developer_certificate_id,b.created_at
+           FROM published_versions pv JOIN apps a ON a.app_id=pv.app_id
+           JOIN submissions s ON s.submission_id=pv.submission_id
+           JOIN app_builds b ON b.build_id=s.build_id
+           JOIN app_availability v ON v.app_id=a.app_id
+          WHERE a.bundle_id=?1 AND v.status='available' AND b.machine_status='valid'
+          UNION ALL
+         SELECT r.release_id,r.bundle_id,r.version,r.file_size AS size,r.sha256,
+                r.package_digest,r.changelog,r.review_status,r.publish_status,r.download_url,
+                r.github_repository,r.github_release_tag,r.github_asset_id,r.asset_name,
+                r.developer_certificate_id,r.created_at
            FROM releases r JOIN bundle_ids b ON b.bundle_id=r.bundle_id
           WHERE r.bundle_id=?1 AND b.status='active' AND validation_status='valid'
             AND review_status='approved' AND publish_status='published'
             AND download_url IS NOT NULL AND sha256 IS NOT NULL AND signature IS NOT NULL
-          ORDER BY published_at DESC",
+          ORDER BY created_at DESC",
         &[value(bundle_id)],
     )
     .await

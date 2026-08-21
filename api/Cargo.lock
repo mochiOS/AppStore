@@ -536,6 +536,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "ed25519-dalek",
+ "futures-util",
  "getrandom 0.4.3",
  "hex",
  "mochios-certificate",

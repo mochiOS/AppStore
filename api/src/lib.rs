@@ -2779,10 +2779,43 @@ async fn admin_submission(req: Request, ctx: RouteContext<()>) -> Result<Respons
         Err(response) => return Ok(response),
     };
     let submission_id = param(&ctx, "submission_id");
-    let Some(submission) = submission_payload(&db(&ctx)?, submission_id).await? else {
+    let database = db(&ctx)?;
+    let Some(submission) = submission_payload(&database, submission_id).await? else {
         return error("SUBMISSION_NOT_FOUND", "Submission not found", 404);
     };
-    json_response(&json!({"admin":actor,"submission":submission}), 200)
+    let previous_submission = match value_str(&submission, "previous_submission_id") {
+        Some(previous_id) if previous_id != submission_id => {
+            submission_payload(&database, previous_id).await?
+        }
+        _ => None,
+    };
+    let published_reference: Option<Value> = store::first(
+        &database,
+        "SELECT v.current_submission_id
+           FROM submissions requested
+           JOIN app_availability v ON v.app_id=requested.app_id
+          WHERE requested.submission_id=?1 AND v.current_submission_id IS NOT NULL",
+        &[store::value(submission_id)],
+    )
+    .await?;
+    let published_submission = match published_reference
+        .as_ref()
+        .and_then(|value| value_str(value, "current_submission_id"))
+    {
+        Some(published_id) if published_id != submission_id => {
+            submission_payload(&database, published_id).await?
+        }
+        _ => None,
+    };
+    json_response(
+        &json!({
+            "admin":actor,
+            "submission":submission,
+            "previous_submission":previous_submission,
+            "published_submission":published_submission,
+        }),
+        200,
+    )
 }
 
 async fn start_submission_review(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -4316,6 +4349,15 @@ mod tests {
         assert!(production.contains("status == \"queue\""));
         assert!(production.contains("review_status IN ('pending','submitted')"));
         assert!(production.contains("COALESCE(r.submitted_at,r.created_at)"));
+    }
+
+    #[test]
+    fn admin_submission_includes_review_comparison_snapshots() {
+        let source = include_str!("lib.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+        assert!(production.contains("\"previous_submission\":previous_submission"));
+        assert!(production.contains("\"published_submission\":published_submission"));
+        assert!(production.contains("JOIN app_availability v ON v.app_id=requested.app_id"));
     }
 
     #[test]

@@ -26,6 +26,12 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .material-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 24px; height: 24px; overflow: visible; font-family: "Material Symbols Outlined"; font-size: 20px; font-style: normal; font-weight: 400; font-feature-settings: "liga"; font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24; letter-spacing: normal; line-height: 1; text-transform: none; white-space: nowrap; word-wrap: normal; }
 .app-shell { min-height: 100vh; }
 
+.maintenance-page { display: grid; min-height: 100vh; place-items: center; padding: 48px 24px; }
+.maintenance-card { width: min(100%, 620px); text-align: center; }
+.maintenance-brand { margin: 0 0 30px; color: var(--secondary); font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.maintenance-card h1 { margin: 0; font-size: clamp(30px, 6vw, 46px); letter-spacing: -.045em; line-height: 1.15; }
+.maintenance-message { margin: 20px auto 0; color: var(--secondary); font-size: 14px; line-height: 1.9; }
+
 .site-header { position: sticky; top: 0; z-index: 20; border-bottom: 1px solid rgba(0,0,0,.055); background: rgba(247,247,247,.88); backdrop-filter: blur(22px) saturate(140%); }
 .site-header__inner { display: flex; align-items: center; justify-content: space-between; width: min(calc(100% - 40px), var(--content)); height: 68px; margin: auto; }
 .brand { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 650; }

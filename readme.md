@@ -2,6 +2,12 @@
 
 `store.mochios.org`で公開するmochiOS向けApp Storeです。フロントエンドはNext.js + OpenNext、APIはRust + `workers-rs`で実装し、どちらもCloudflare WorkersへWranglerで公開します。
 
+## 現在の公開状態
+
+ストアフロントはメンテナンスモードです。`store.mochios.org`配下のすべての画面をメンテナンス案内へ内部的に書き換え、既存のカタログAPIを呼び出しません。検索エンジンにはインデックスしないよう応答します。
+
+既存のApp Store実装と`api.store.mochios.org`のAPIは削除していませんが、方針確定までストアフロントの機能追加は行いません。
+
 ## 実装済み
 
 - API駆動の「見つける」ストアフロント

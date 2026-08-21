@@ -127,6 +127,24 @@ pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<Rel
     .await
 }
 
+pub async fn acquired_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
+    rows(
+        db,
+        "SELECT b.build_id AS release_id,a.bundle_id,b.version,b.file_size AS size,b.sha256,
+                b.package_digest,NULL AS changelog,'approved' AS review_status,
+                'published' AS publish_status,b.download_url,b.github_repository,
+                b.github_release_tag,b.github_asset_id,b.asset_name,
+                b.certificate_id AS developer_certificate_id,b.created_at
+           FROM published_versions pv JOIN apps a ON a.app_id=pv.app_id
+           JOIN submissions s ON s.submission_id=pv.submission_id
+           JOIN app_builds b ON b.build_id=s.build_id
+          WHERE a.bundle_id=?1 AND b.machine_status='valid'
+          ORDER BY pv.published_at DESC",
+        &[value(bundle_id)],
+    )
+    .await
+}
+
 pub async fn developer_apps(db: &D1Database, developer_id: &str) -> Result<Vec<Value>> {
     rows(
         db,
@@ -170,10 +188,13 @@ pub async fn release_by_id(db: &D1Database, release_id: &str) -> Result<Option<V
 
 const DEVELOPER_NOTIFICATION_ACTIONS: &str =
     "'release.validation_succeeded','release.validation_failed','release.approve',
-     'release.reject','release.withdraw','package.suspend','package.restore'";
+     'release.reject','release.withdraw','package.suspend','package.restore',
+     'submission.decision','appeal.resolve','app.removed'";
 
 const OPERATOR_NOTIFICATION_ACTIONS: &str =
-    "'release.validation_succeeded','release.validation_failed','release.withdraw'";
+    "'release.validation_succeeded','release.validation_failed','release.withdraw',
+     'submission.submit','submission.information_provided','appeal.submit',
+     'app.developer_unpublish','app.certificate_replaced'";
 
 pub async fn developer_notifications(
     db: &D1Database,
@@ -195,6 +216,15 @@ pub async fn developer_notifications(
                        SELECT 1 FROM releases r
                         WHERE r.release_id=a.target_id AND r.registered_by=?1))
                   OR (a.target_type='package' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1))
+                  OR (a.target_type='submission' AND EXISTS(
+                       SELECT 1 FROM submissions s JOIN apps p ON p.app_id=s.app_id
+                        WHERE s.submission_id=a.target_id AND p.developer_id=?1))
+                  OR (a.target_type='appeal' AND EXISTS(
+                       SELECT 1 FROM appeals x JOIN apps p ON p.app_id=x.app_id
+                        WHERE x.appeal_id=a.target_id AND p.developer_id=?1))
+                  OR (a.target_type='app' AND EXISTS(
                        SELECT 1 FROM apps p
                         WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))
               ORDER BY a.created_at DESC,a.audit_id DESC LIMIT ?3 OFFSET ?4"
@@ -226,6 +256,15 @@ pub async fn developer_unread_count(
                        SELECT 1 FROM releases r
                         WHERE r.release_id=a.target_id AND r.registered_by=?1))
                   OR (a.target_type='package' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1))
+                  OR (a.target_type='submission' AND EXISTS(
+                       SELECT 1 FROM submissions s JOIN apps p ON p.app_id=s.app_id
+                        WHERE s.submission_id=a.target_id AND p.developer_id=?1))
+                  OR (a.target_type='appeal' AND EXISTS(
+                       SELECT 1 FROM appeals x JOIN apps p ON p.app_id=x.app_id
+                        WHERE x.appeal_id=a.target_id AND p.developer_id=?1))
+                  OR (a.target_type='app' AND EXISTS(
                        SELECT 1 FROM apps p
                         WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))"
         ),

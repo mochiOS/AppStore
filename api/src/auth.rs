@@ -59,6 +59,39 @@ pub struct DeveloperActor {
     pub role: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct AccountEnvelope {
+    account: AccountRecord,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountRecord {
+    id: String,
+    status: String,
+}
+
+pub async fn account(req: &Request, env: &worker::Env) -> Result<Option<String>> {
+    let Some(headers) = authorization_headers(req)? else {
+        return Ok(None);
+    };
+    headers.set(
+        "X-AppStore-Service-Token",
+        &env.secret("APPSTORE_SERVICE_TOKEN")?.to_string(),
+    )?;
+    let mut init = RequestInit::new();
+    init.with_method(Method::Get).with_headers(headers);
+    let request = Request::new_with_init("https://accounts/v1/internal/appstore/session", &init)?;
+    let mut response = env.service("ACCOUNTS")?.fetch_request(request).await?;
+    if response.status_code() != 200 {
+        return Ok(None);
+    }
+    let envelope: AccountEnvelope = response.json().await?;
+    Ok(
+        (envelope.account.status == "active" && !envelope.account.id.is_empty())
+            .then_some(envelope.account.id),
+    )
+}
+
 pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<DeveloperActor>> {
     let developer_id = req.headers().get("X-Developer-ID")?.unwrap_or_default();
     let Some(headers) = authorization_headers(req)? else {

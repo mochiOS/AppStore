@@ -214,6 +214,38 @@ fn workflow_enforces_certificate_domain_and_append_only_history_invariants() {
 }
 
 #[test]
+fn appeals_are_not_limited_per_app_or_submission() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    apply_all_migrations(&connection);
+    insert_workflow_fixture(&connection);
+    connection.execute_batch(
+        "INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
+           github_repository_id,github_repository,github_release_id,github_release_tag,
+           github_asset_id,asset_name,download_url,file_size,registered_by_account_id,created_at)
+         VALUES('build','app','cert-one','1.0.0',1,1,'example/app',10,'v1',100,
+           'app.mpkg','https://github.com/example/app/releases/download/v1/app.mpkg',10,'account',1);
+         INSERT INTO submissions(submission_id,app_id,build_id,version,submission_number,
+           submission_kind,state,created_by_account_id,created_at,updated_at)
+         VALUES('submission','app','build','1.0.0',1,'new_app','rejected','account',1,1);
+         INSERT INTO appeals(appeal_id,app_id,submission_id,appealed_action,reason,state,
+           submitted_by_account_id,created_at)
+         VALUES
+           ('appeal-one','app','submission','review_decision','First','resolved','account',2),
+           ('appeal-two','app','submission','review_decision','Second','submitted','account',3);",
+    ).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM appeals WHERE app_id='app'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
 fn legacy_reviewer_results_are_projected_to_builds() {
     let connection = Connection::open_in_memory().expect("open migration fixture");
     apply_all_migrations(&connection);

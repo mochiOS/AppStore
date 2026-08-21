@@ -13,7 +13,7 @@ use base64::{
 use ed25519_dalek::{Signature, VerifyingKey};
 use futures_util::StreamExt;
 use model::*;
-use serde::Serialize;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use worker::*;
 
@@ -22,6 +22,7 @@ const STORE_ORIGIN: &str = "https://store.mochios.org";
 const CONSOLE_ORIGIN: &str = "https://console.mochios.org";
 const MAX_PACKAGE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_SAFE_JS_INTEGER: u64 = 9_007_199_254_740_991;
+const MAX_JSON_BODY_BYTES: usize = 128 * 1024;
 
 fn now() -> i64 {
     (Date::now().as_millis() / 1000) as i64
@@ -31,6 +32,35 @@ fn id(prefix: &str) -> String {
 }
 fn param<'a>(ctx: &'a RouteContext<()>, name: &str) -> &'a str {
     ctx.param(name).map(String::as_str).unwrap_or("")
+}
+
+async fn bounded_json<T: DeserializeOwned>(
+    req: &mut Request,
+) -> Result<std::result::Result<T, Response>> {
+    if req
+        .headers()
+        .get("Content-Length")?
+        .and_then(|value| value.parse::<usize>().ok())
+        .is_some_and(|length| length > MAX_JSON_BODY_BYTES)
+    {
+        return Ok(Err(error(
+            "REQUEST_TOO_LARGE",
+            "JSON request body is too large",
+            413,
+        )?));
+    }
+    let bytes = req.bytes().await?;
+    if bytes.len() > MAX_JSON_BODY_BYTES {
+        return Ok(Err(error(
+            "REQUEST_TOO_LARGE",
+            "JSON request body is too large",
+            413,
+        )?));
+    }
+    Ok(match serde_json::from_slice(&bytes) {
+        Ok(value) => Ok(value),
+        Err(_) => Err(error("JSON_INVALID", "JSON request body is invalid", 400)?),
+    })
 }
 fn db(ctx: &RouteContext<()>) -> Result<D1Database> {
     ctx.env.d1("DB")
@@ -432,6 +462,20 @@ async fn require_developer_actor(
     })
 }
 
+async fn require_account(
+    req: &Request,
+    env: &Env,
+) -> Result<std::result::Result<String, Response>> {
+    Ok(match auth::account(req, env).await? {
+        Some(account_id) => Ok(account_id),
+        None => Err(error(
+            "ACCOUNT_AUTH_REQUIRED",
+            "An active mochiOS ID account session is required",
+            401,
+        )?),
+    })
+}
+
 fn require_admin(req: &Request, env: &Env) -> Result<std::result::Result<String, Response>> {
     Ok(match auth::admin(req, env)? {
         Some(id) => Ok(id),
@@ -550,6 +594,28 @@ async fn app_releases(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     )
 }
 
+async fn app_status(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "app-status").await?
+    {
+        return Ok(response);
+    }
+    let bundle_id = param(&ctx, "bundle_id");
+    let Some(app) = store::first::<Value>(
+        &db(&ctx)?,
+        "SELECT a.bundle_id,a.display_name,COALESCE(v.status,'not_available') status,
+                CASE WHEN v.status='removed' THEN v.reason ELSE NULL END reason,v.changed_at
+           FROM apps a LEFT JOIN app_availability v ON v.app_id=a.app_id
+          WHERE a.bundle_id=?1 LIMIT 1",
+        &[store::value(bundle_id)],
+    )
+    .await?
+    else {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    };
+    json_response(&json!({"app":app}), 200)
+}
+
 async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if let Some(response) = rate_limited(&req, &ctx.env, "PUBLIC_RATE_LIMITER", "download").await? {
         return Ok(response);
@@ -560,21 +626,122 @@ async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         .query_pairs()
         .find(|(key, _)| key == "version")
         .map(|(_, value)| value.into_owned());
-    if store::public_app(&db(&ctx)?, bundle_id).await?.is_none() {
+    let database = db(&ctx)?;
+    let Some(app) = store::first::<Value>(
+        &database,
+        "SELECT a.app_id,CASE WHEN v.status IS NULL AND a.visibility='public' THEN 'available'
+                    ELSE COALESCE(v.status,'not_available') END status
+           FROM apps a LEFT JOIN app_availability v ON v.app_id=a.app_id
+           JOIN bundle_ids b ON b.bundle_id=a.bundle_id AND b.status='active'
+          WHERE a.bundle_id=?1 LIMIT 1",
+        &[store::value(bundle_id)],
+    )
+    .await?
+    else {
         return error("APP_NOT_FOUND", "App not found", 404);
-    }
-    let release = store::public_releases(&db(&ctx)?, bundle_id)
+    };
+    let status = value_str(&app, "status").unwrap_or("not_available");
+    let releases = if status == "available" {
+        store::public_releases(&database, bundle_id).await?
+    } else if matches!(status, "developer_unpublished" | "removed") {
+        let account_id = match require_account(&req, &ctx.env).await? {
+            Ok(account_id) => account_id,
+            Err(response) => return Ok(response),
+        };
+        if store::first::<Value>(
+            &database,
+            "SELECT app_id FROM app_acquisitions WHERE app_id=?1 AND account_id=?2",
+            &[
+                store::value(value_str(&app, "app_id").unwrap_or("")),
+                store::value(&account_id),
+            ],
+        )
         .await?
-        .into_iter()
-        .find(|release| {
-            version
-                .as_deref()
-                .is_none_or(|value| release.version == value)
-        });
+        .is_none()
+        {
+            return error(
+                "APP_NOT_ACQUIRED",
+                "This account did not acquire the App before it became unavailable",
+                403,
+            );
+        }
+        store::acquired_releases(&database, bundle_id).await?
+    } else {
+        return error("APP_NOT_AVAILABLE", "App is not available", 404);
+    };
+    let release = releases.into_iter().find(|release| {
+        version
+            .as_deref()
+            .is_none_or(|value| release.version == value)
+    });
     let Some(release) = release else {
         return error("RELEASE_NOT_FOUND", "Release not found", 404);
     };
     redirect_to(&release.download_url, "public, max-age=300")
+}
+
+async fn acquire_app(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "app-acquire").await?
+    {
+        return Ok(response);
+    }
+    let account_id = match require_account(&req, &ctx.env).await? {
+        Ok(account_id) => account_id,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    let Some(app) = store::first::<Value>(
+        &database,
+        "SELECT a.app_id FROM apps a JOIN app_availability v ON v.app_id=a.app_id
+           JOIN bundle_ids b ON b.bundle_id=a.bundle_id AND b.status='active'
+          WHERE a.bundle_id=?1 AND v.status='available'",
+        &[store::value(bundle_id)],
+    )
+    .await?
+    else {
+        return error(
+            "APP_NOT_AVAILABLE",
+            "App is not available for acquisition",
+            409,
+        );
+    };
+    let app_id = value_str(&app, "app_id").unwrap_or("");
+    let timestamp = now();
+    database
+        .batch(vec![
+            database
+                .prepare(
+                    "INSERT OR IGNORE INTO app_acquisitions(app_id,account_id,first_acquired_at)
+                     VALUES(?1,?2,?3)",
+                )
+                .bind(&[
+                    store::value(app_id),
+                    store::value(&account_id),
+                    store::number(timestamp),
+                ])?,
+            store::audit_statement(
+                &database,
+                Some(&account_id),
+                "app.acquire",
+                "app",
+                bundle_id,
+                json!({}),
+                timestamp,
+            )?,
+        ])
+        .await?;
+    let acquisition: Option<Value> = store::first(
+        &database,
+        "SELECT first_acquired_at FROM app_acquisitions WHERE app_id=?1 AND account_id=?2",
+        &[store::value(app_id), store::value(&account_id)],
+    )
+    .await?;
+    json_response(
+        &json!({"bundle_id":bundle_id,"account_id":account_id,"acquisition":acquisition}),
+        200,
+    )
 }
 
 async fn bundle_ids(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -1022,7 +1189,10 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
     {
         return Ok(response);
     }
-    let input: SubmissionDraftInput = req.json().await?;
+    let input: SubmissionDraftInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if !valid_submission_draft(&input) {
         return error(
             "SUBMISSION_INVALID",
@@ -1168,7 +1338,10 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
             409,
         );
     }
-    let input: SubmissionDraftInput = req.json().await?;
+    let input: SubmissionDraftInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if !valid_submission_draft(&input) {
         return error(
             "SUBMISSION_INVALID",
@@ -1404,7 +1577,10 @@ async fn answer_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Re
     };
     let bundle_id = param(&ctx, "bundle_id");
     let submission_id = param(&ctx, "submission_id");
-    let input: SubmissionMessageInput = req.json().await?;
+    let input: SubmissionMessageInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if input.body.trim().is_empty() || input.body.trim().chars().count() > 8000 {
         return error("MESSAGE_INVALID", "Additional information is invalid", 422);
     }
@@ -1477,7 +1653,10 @@ async fn developer_appeals(mut req: Request, ctx: RouteContext<()>) -> Result<Re
         .await?;
         return json_response(&json!({"appeals":appeals}), 200);
     }
-    let input: AppealInput = req.json().await?;
+    let input: AppealInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if input.reason.trim().is_empty()
         || input.reason.trim().chars().count() > 8000
         || !matches!(
@@ -1544,7 +1723,10 @@ async fn developer_unpublish(mut req: Request, ctx: RouteContext<()>) -> Result<
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
-    let input: UnpublishInput = req.json().await?;
+    let input: UnpublishInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if input.reason.trim().is_empty() || input.reason.trim().chars().count() > 2000 {
         return error("REASON_REQUIRED", "Unpublish reason is required", 422);
     }
@@ -1603,7 +1785,10 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
-    let input: CertificateReplacementInput = req.json().await?;
+    let input: CertificateReplacementInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if input.confirmation != "REPLACE" || input.certificate_id.trim().is_empty() {
         return error(
             "CERTIFICATE_REPLACEMENT_CONFIRMATION_REQUIRED",
@@ -2623,7 +2808,10 @@ async fn decide_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Re
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
-    let input: ReviewDecisionInput = req.json().await?;
+    let input: ReviewDecisionInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if !matches!(
         input.decision.as_str(),
         "approved" | "changes_required" | "more_information_required" | "rejected"
@@ -2800,7 +2988,9 @@ async fn decide_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Re
         "submission.decision",
         "submission",
         submission_id,
-        json!({"decision":input.decision,"reason":input.reason,"bundle_id":value_str(&submission,"bundle_id")}),
+        json!({"decision":input.decision,"reason":input.reason,
+            "developer_id":value_str(&submission,"developer_id"),
+            "package_id":value_str(&submission,"bundle_id")}),
         timestamp,
     )?);
     database.batch(statements).await?;
@@ -2815,7 +3005,10 @@ async fn admin_remove_app(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
-    let input: RemovalInput = req.json().await?;
+    let input: RemovalInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if input.confirmation != "REMOVE"
         || input.reason.trim().is_empty()
         || input.reason.trim().chars().count() > 8000
@@ -2871,6 +3064,56 @@ async fn admin_remove_app(mut req: Request, ctx: RouteContext<()>) -> Result<Res
     json_response(&json!({"status":"removed","reason":input.reason}), 200)
 }
 
+async fn admin_apps(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let availability = req
+        .url()?
+        .query_pairs()
+        .find(|(key, _)| key == "availability")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_else(|| "all".into());
+    if !matches!(
+        availability.as_str(),
+        "available" | "developer_unpublished" | "removed" | "not_available" | "all"
+    ) {
+        return error("AVAILABILITY_INVALID", "Availability is invalid", 422);
+    }
+    let (limit, offset) = page(&req);
+    let apps: Vec<Value> = if availability == "all" {
+        store::rows(
+            &db(&ctx)?,
+            "SELECT a.app_id,a.bundle_id,a.developer_id,a.display_name,
+                    COALESCE(v.status,'not_available') availability_status,v.reason,
+                    v.current_submission_id,v.changed_by_account_id,v.changed_at
+               FROM apps a LEFT JOIN app_availability v ON v.app_id=a.app_id
+              ORDER BY COALESCE(v.changed_at,a.updated_at) DESC LIMIT ?1 OFFSET ?2",
+            &[store::number(limit), store::number(offset)],
+        )
+        .await?
+    } else {
+        store::rows(
+            &db(&ctx)?,
+            "SELECT a.app_id,a.bundle_id,a.developer_id,a.display_name,v.status availability_status,
+                    v.reason,v.current_submission_id,v.changed_by_account_id,v.changed_at
+               FROM apps a JOIN app_availability v ON v.app_id=a.app_id
+              WHERE v.status=?1 ORDER BY v.changed_at DESC LIMIT ?2 OFFSET ?3",
+            &[
+                store::value(&availability),
+                store::number(limit),
+                store::number(offset),
+            ],
+        )
+        .await?
+    };
+    json_response(
+        &json!({"admin":actor,"availability":availability,"apps":apps}),
+        200,
+    )
+}
+
 async fn admin_appeals(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let actor = match require_admin(&req, &ctx.env)? {
         Ok(actor) => actor,
@@ -2898,7 +3141,10 @@ async fn admin_appeals(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
         return json_response(&json!({"admin":actor,"appeals":appeals}), 200);
     }
     let appeal_id = param(&ctx, "appeal_id");
-    let input: AppealResolutionInput = req.json().await?;
+    let input: AppealResolutionInput = match bounded_json(&mut req).await? {
+        Ok(input) => input,
+        Err(response) => return Ok(response),
+    };
     if !matches!(input.outcome.as_str(), "accepted" | "dismissed")
         || input.reason.trim().is_empty()
         || input.reason.trim().chars().count() > 8000
@@ -3664,7 +3910,9 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v1/search", search)
         .get_async("/v1/storefront", storefront)
         .get_async("/v1/apps/:bundle_id/releases", app_releases)
+        .get_async("/v1/apps/:bundle_id/status", app_status)
         .get_async("/v1/apps/:bundle_id/download", download)
+        .post_async("/v1/apps/:bundle_id/acquisitions", acquire_app)
         .get_async("/v1/apps/:bundle_id", app_detail)
         .get_async("/v1/bundle-ids", bundle_ids)
         .post_async("/v1/bundle-ids", bundle_ids)
@@ -3739,6 +3987,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/v1/admin/appeals", admin_appeals)
         .post_async("/v1/admin/appeals/:appeal_id/resolve", admin_appeals)
         .post_async("/v1/admin/apps/:bundle_id/remove", admin_remove_app)
+        .get_async("/v1/admin/apps", admin_apps)
         .get_async("/v1/admin/notifications", admin_notifications)
         .post_async(
             "/v1/admin/notifications/read-all",
@@ -3855,6 +4104,7 @@ mod tests {
     #[test]
     fn mpkg_limit_is_bounded() {
         assert_eq!(MAX_PACKAGE_BYTES, 134_217_728);
+        assert_eq!(MAX_JSON_BODY_BYTES, 131_072);
     }
 
     #[test]
@@ -4072,5 +4322,12 @@ mod tests {
         assert!(production.contains("require_admin(&req, &ctx.env)"));
         assert!(production.contains("/v1/developer/apps/:bundle_id/history"));
         assert!(production.contains("/v1/admin/releases/:release_id/history"));
+        assert!(production.contains("/v1/admin/submissions/:submission_id/decision"));
+        assert!(production.contains("/v1/admin/apps/:bundle_id/remove"));
+        let store = include_str!("store.rs");
+        assert!(store.contains("'submission.decision','appeal.resolve','app.removed'"));
+        assert!(
+            store.contains("'submission.submit','submission.information_provided','appeal.submit'")
+        );
     }
 }

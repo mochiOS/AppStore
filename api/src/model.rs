@@ -183,6 +183,7 @@ pub struct TeamAssignment {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScreenshotInput {
+    pub position: u32,
     pub image_url: String,
     #[serde(default)]
     pub contains_actual_app_ui: bool,

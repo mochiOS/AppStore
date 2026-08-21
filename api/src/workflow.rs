@@ -49,6 +49,7 @@ pub fn valid_external_domain(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty()
         || value.len() > 253
+        || value != value.to_ascii_lowercase()
         || value.contains(['*', '/', ':'])
         || value.starts_with('.')
         || value.ends_with('.')
@@ -153,6 +154,7 @@ mod tests {
         assert!(valid_external_domain("example.com"));
         for invalid in [
             "*.example.com",
+            "API.example.com",
             "https://example.com",
             "example.com/path",
             "localhost",

@@ -493,10 +493,15 @@ pub async fn storefront(db: &D1Database) -> Result<Value> {
     let games = public_apps(db, Some("game"), None, None, 12, 0).await?;
     let categories: Vec<Value> = rows(
         db,
-        "SELECT lower(replace(a.category, ' ', '-')) AS slug, a.category AS name, NULL AS artwork
-         FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
-         WHERE a.visibility='public' AND b.status='active' AND a.category IS NOT NULL
-         GROUP BY a.category ORDER BY a.category",
+        "SELECT lower(replace(COALESCE(d.category,a.category), ' ', '-')) AS slug,
+                COALESCE(d.category,a.category) AS name,NULL AS artwork
+           FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
+           LEFT JOIN app_availability v ON v.app_id=a.app_id
+           LEFT JOIN submissions s ON s.submission_id=v.current_submission_id
+           LEFT JOIN submission_details d ON d.submission_id=s.submission_id
+          WHERE (v.status='available' OR (v.app_id IS NULL AND a.visibility='public'))
+            AND b.status='active' AND COALESCE(d.category,a.category) IS NOT NULL
+          GROUP BY COALESCE(d.category,a.category) ORDER BY COALESCE(d.category,a.category)",
         &[],
     )
     .await?;

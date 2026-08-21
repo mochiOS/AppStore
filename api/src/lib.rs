@@ -4,7 +4,7 @@ mod model;
 mod store;
 pub mod workflow;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use base64::{
     Engine,
@@ -258,6 +258,21 @@ fn valid_submission_draft(input: &SubmissionDraftInput) -> bool {
         test_account: input.test_account.as_deref(),
         test_instructions: input.test_instructions.as_deref(),
     };
+    let screenshot_positions = input
+        .screenshots
+        .iter()
+        .map(|screenshot| screenshot.position)
+        .collect::<HashSet<_>>();
+    let domain_names = input
+        .external_domains
+        .iter()
+        .map(|domain| domain.trim())
+        .collect::<HashSet<_>>();
+    let data_category_names = input
+        .data_categories
+        .iter()
+        .map(|category| category.category.trim())
+        .collect::<HashSet<_>>();
     workflow::valid_app_name(&input.app_name)
         && workflow::valid_release_channel_name(&input.app_name, &input.release_channel)
         && input.developer_name.trim().chars().count() <= 128
@@ -274,16 +289,17 @@ fn valid_submission_draft(input: &SubmissionDraftInput) -> bool {
                 .filter(|screenshot| screenshot.contains_actual_app_ui)
                 .count(),
         )
-        && input
-            .screenshots
-            .iter()
-            .all(|screenshot| valid_icon_url(Some(&screenshot.image_url)))
+        && input.screenshots.iter().all(|screenshot| {
+            (1..=20).contains(&screenshot.position) && valid_icon_url(Some(&screenshot.image_url))
+        })
+        && screenshot_positions.len() == input.screenshots.len()
         && matches!(input.kind.as_str(), "app" | "game")
         && matches!(
             input.submission_kind.as_str(),
             "new_app" | "update" | "re_review"
         )
         && input.primary_purpose == "general"
+        && (!input.uses_ai_generated_content || input.disclose_ai_generated_content)
         && input.content_declarations.is_object()
         && valid_optional_text(input.category.as_deref(), 80)
         && valid_optional_text(input.age_rating.as_deref(), 40)
@@ -296,6 +312,9 @@ fn valid_submission_draft(input: &SubmissionDraftInput) -> bool {
                 && category.category.trim().chars().count() <= 80
                 && valid_optional_text(category.details.as_deref(), 2000)
         })
+        && (!input.collects_data || !input.data_categories.is_empty())
+        && data_category_names.len() == input.data_categories.len()
+        && domain_names.len() == input.external_domains.len()
         && workflow::valid_declarations(&declarations)
 }
 
@@ -1025,14 +1044,14 @@ fn draft_detail_statements(
             optional_value(input.test_instructions.as_deref()),
         ])?,
     );
-    for (position, screenshot) in input.screenshots.iter().enumerate() {
+    for screenshot in &input.screenshots {
         statements.push(
             database.prepare(
                 "INSERT INTO submission_screenshots(submission_id,position,image_url,contains_actual_app_ui)
                  VALUES(?1,?2,?3,?4)",
             ).bind(&[
                 store::value(submission_id),
-                store::number(position as i64),
+                    store::number(screenshot.position.into()),
                 store::value(screenshot.image_url.trim()),
                 bool_value(screenshot.contains_actual_app_ui),
             ])?,
@@ -4324,6 +4343,8 @@ mod tests {
         assert!(production.contains("/v1/admin/releases/:release_id/history"));
         assert!(production.contains("/v1/admin/submissions/:submission_id/decision"));
         assert!(production.contains("/v1/admin/apps/:bundle_id/remove"));
+        assert!(production.contains("/v1/apps/:bundle_id/acquisitions"));
+        assert!(production.contains("require_account(&req, &ctx.env)"));
         let store = include_str!("store.rs");
         assert!(store.contains("'submission.decision','appeal.resolve','app.removed'"));
         assert!(

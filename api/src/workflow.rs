@@ -35,6 +35,16 @@ pub fn valid_screenshot_set(count: usize, actual_app_ui_count: usize) -> bool {
     count >= 3 && actual_app_ui_count > 0 && actual_app_ui_count <= count
 }
 
+pub fn valid_release_channel_name(name: &str, channel: &str) -> bool {
+    match channel {
+        "stable" => true,
+        "alpha" | "beta" | "experimental" => name
+            .split(|character: char| !character.is_alphanumeric())
+            .any(|word| word.eq_ignore_ascii_case(channel)),
+        _ => false,
+    }
+}
+
 pub fn valid_external_domain(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty()
@@ -82,6 +92,12 @@ pub struct DeclarationSummary<'a> {
     pub dynamic_code_explanation: Option<&'a str>,
     pub uses_external_updates: bool,
     pub external_updates_explanation: Option<&'a str>,
+    pub tracks_across_services: bool,
+    pub tracking_user_consent: bool,
+    pub uses_location_for_advertising: bool,
+    pub requires_login: bool,
+    pub test_account: Option<&'a str>,
+    pub test_instructions: Option<&'a str>,
 }
 
 pub fn valid_declarations(value: &DeclarationSummary<'_>) -> bool {
@@ -97,6 +113,11 @@ pub fn valid_declarations(value: &DeclarationSummary<'_>) -> bool {
         && (!value.collects_data || present(value.data_collection_description))
         && (!value.executes_dynamic_code || present(value.dynamic_code_explanation))
         && (!value.uses_external_updates || present(value.external_updates_explanation))
+        && (!value.tracks_across_services || value.tracking_user_consent)
+        && !value.uses_location_for_advertising
+        && (!value.requires_login
+            || present(value.test_account)
+            || present(value.test_instructions))
 }
 
 #[cfg(test)]
@@ -122,6 +143,8 @@ mod tests {
         assert!(valid_screenshot_set(3, 1));
         assert!(!valid_screenshot_set(2, 1));
         assert!(!valid_screenshot_set(3, 0));
+        assert!(valid_release_channel_name("Binder Beta", "beta"));
+        assert!(!valid_release_channel_name("Binder", "beta"));
     }
 
     #[test]
@@ -186,6 +209,12 @@ mod tests {
             dynamic_code_explanation: Some("プラグインを実行"),
             uses_external_updates: true,
             external_updates_explanation: Some("ゲームデータを取得"),
+            tracks_across_services: true,
+            tracking_user_consent: true,
+            uses_location_for_advertising: false,
+            requires_login: true,
+            test_account: None,
+            test_instructions: Some("ゲストアカウントを選択"),
         };
         assert!(valid_declarations(&valid));
         assert!(!valid_declarations(&DeclarationSummary {

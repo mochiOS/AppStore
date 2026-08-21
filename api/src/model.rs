@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct BundleInput {
@@ -177,6 +178,134 @@ pub struct MemberInput {
 #[derive(Debug, Deserialize)]
 pub struct TeamAssignment {
     pub team_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenshotInput {
+    pub image_url: String,
+    #[serde(default)]
+    pub contains_actual_app_ui: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DataCategoryInput {
+    pub category: String,
+    #[serde(default)]
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmissionDraftInput {
+    pub build_id: String,
+    pub submission_kind: String,
+    #[serde(default)]
+    pub previous_submission_id: Option<String>,
+    pub app_name: String,
+    pub developer_name: String,
+    pub description: String,
+    pub icon_url: String,
+    pub icon_media_type: String,
+    pub icon_width: u32,
+    pub icon_height: u32,
+    #[serde(default)]
+    pub category: Option<String>,
+    pub kind: String,
+    #[serde(default = "default_release_channel")]
+    pub release_channel: String,
+    #[serde(default = "default_primary_purpose")]
+    pub primary_purpose: String,
+    #[serde(default)]
+    pub age_rating: Option<String>,
+    pub screenshots: Vec<ScreenshotInput>,
+    #[serde(default)]
+    pub capability_reasons: HashMap<String, String>,
+    #[serde(default)]
+    pub external_communication: bool,
+    #[serde(default)]
+    pub external_communication_reason: Option<String>,
+    #[serde(default)]
+    pub external_communication_purpose: Option<String>,
+    #[serde(default)]
+    pub external_domains: Vec<String>,
+    #[serde(default)]
+    pub collects_data: bool,
+    #[serde(default)]
+    pub data_collection_description: Option<String>,
+    #[serde(default)]
+    pub data_categories: Vec<DataCategoryInput>,
+    #[serde(default)]
+    pub uses_advertising: bool,
+    #[serde(default)]
+    pub uses_analytics: bool,
+    #[serde(default)]
+    pub tracks_across_services: bool,
+    #[serde(default)]
+    pub tracking_user_consent: bool,
+    #[serde(default)]
+    pub uses_location_for_advertising: bool,
+    #[serde(default)]
+    pub has_payments: bool,
+    #[serde(default)]
+    pub content_declarations: serde_json::Value,
+    #[serde(default)]
+    pub executes_dynamic_code: bool,
+    #[serde(default)]
+    pub dynamic_code_explanation: Option<String>,
+    #[serde(default)]
+    pub uses_external_updates: bool,
+    #[serde(default)]
+    pub external_updates_explanation: Option<String>,
+    #[serde(default)]
+    pub is_emulator: bool,
+    #[serde(default)]
+    pub is_virtual_machine: bool,
+    #[serde(default)]
+    pub supports_plugins: bool,
+    #[serde(default)]
+    pub is_external_app_store: bool,
+    #[serde(default)]
+    pub uses_ai_generated_content: bool,
+    #[serde(default)]
+    pub disclose_ai_generated_content: bool,
+    #[serde(default)]
+    pub reviewer_notes: Option<String>,
+    #[serde(default)]
+    pub requires_login: bool,
+    #[serde(default)]
+    pub test_account: Option<String>,
+    #[serde(default)]
+    pub test_instructions: Option<String>,
+}
+
+fn default_release_channel() -> String {
+    "stable".into()
+}
+
+fn default_primary_purpose() -> String {
+    "general".into()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SubmissionMessageInput {
+    pub body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppealInput {
+    pub submission_id: Option<String>,
+    pub appealed_action: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnpublishInput {
+    pub reason: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

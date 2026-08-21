@@ -74,6 +74,10 @@ CREATE TABLE submission_details (
   icon_height INTEGER NOT NULL CHECK (icon_height = 512),
   category TEXT,
   kind TEXT NOT NULL CHECK (kind IN ('app', 'game')),
+  release_channel TEXT NOT NULL DEFAULT 'stable'
+    CHECK (release_channel IN ('stable', 'alpha', 'beta', 'experimental')),
+  primary_purpose TEXT NOT NULL DEFAULT 'general'
+    CHECK (primary_purpose IN ('general', 'medical', 'financial')),
   age_rating TEXT,
   external_communication INTEGER NOT NULL CHECK (external_communication IN (0, 1)),
   external_communication_reason TEXT,
@@ -82,6 +86,9 @@ CREATE TABLE submission_details (
   data_collection_description TEXT,
   uses_advertising INTEGER NOT NULL CHECK (uses_advertising IN (0, 1)),
   uses_analytics INTEGER NOT NULL CHECK (uses_analytics IN (0, 1)),
+  tracks_across_services INTEGER NOT NULL CHECK (tracks_across_services IN (0, 1)),
+  tracking_user_consent INTEGER NOT NULL CHECK (tracking_user_consent IN (0, 1)),
+  uses_location_for_advertising INTEGER NOT NULL CHECK (uses_location_for_advertising IN (0, 1)),
   has_payments INTEGER NOT NULL CHECK (has_payments IN (0, 1)),
   content_declarations_json TEXT NOT NULL DEFAULT '{}',
   executes_dynamic_code INTEGER NOT NULL CHECK (executes_dynamic_code IN (0, 1)),
@@ -95,6 +102,7 @@ CREATE TABLE submission_details (
   uses_ai_generated_content INTEGER NOT NULL CHECK (uses_ai_generated_content IN (0, 1)),
   disclose_ai_generated_content INTEGER NOT NULL CHECK (disclose_ai_generated_content IN (0, 1)),
   reviewer_notes TEXT,
+  requires_login INTEGER NOT NULL CHECK (requires_login IN (0, 1)),
   test_account TEXT,
   test_instructions TEXT
 );

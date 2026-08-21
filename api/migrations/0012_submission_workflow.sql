@@ -1,13 +1,17 @@
 CREATE TABLE app_certificates (
-  app_id TEXT PRIMARY KEY REFERENCES apps(app_id) ON DELETE CASCADE,
+  app_id TEXT NOT NULL REFERENCES apps(app_id) ON DELETE CASCADE,
   certificate_id TEXT NOT NULL UNIQUE,
   assigned_by_account_id TEXT NOT NULL,
   assigned_at INTEGER NOT NULL,
   last_verified_at INTEGER,
   observed_status TEXT NOT NULL DEFAULT 'active'
     CHECK (observed_status IN ('active', 'suspended', 'revoked')),
-  UNIQUE (app_id, certificate_id)
+  is_current INTEGER NOT NULL DEFAULT 1 CHECK (is_current IN (0, 1)),
+  PRIMARY KEY (app_id, certificate_id)
 );
+
+CREATE UNIQUE INDEX idx_app_current_certificate
+  ON app_certificates(app_id) WHERE is_current=1;
 
 CREATE TABLE app_builds (
   build_id TEXT PRIMARY KEY,

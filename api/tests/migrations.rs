@@ -133,11 +133,26 @@ fn workflow_enforces_certificate_domain_and_append_only_history_invariants() {
     assert!(
         connection
             .execute(
-                "INSERT INTO app_certificates VALUES('app','cert-two','account',2,NULL,'active')",
+                "INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,assigned_at)
+                 VALUES('app','cert-two','account',2)",
                 []
             )
             .is_err()
     );
+
+    connection
+        .execute(
+            "UPDATE app_certificates SET is_current=0,observed_status='revoked' WHERE app_id='app'",
+            [],
+        )
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,assigned_at)
+             VALUES('app','cert-two','account',2)",
+            [],
+        )
+        .expect("a revoked certificate can be replaced without deleting build history");
 
     connection.execute_batch(
         "INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,

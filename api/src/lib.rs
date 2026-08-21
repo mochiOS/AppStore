@@ -968,6 +968,24 @@ async fn submission_payload(database: &D1Database, submission_id: &str) -> Resul
     Ok(Some(submission))
 }
 
+async fn valid_previous_submission(
+    database: &D1Database,
+    app_id: &str,
+    previous_submission_id: Option<&str>,
+) -> Result<bool> {
+    let Some(previous_submission_id) = previous_submission_id else {
+        return Ok(true);
+    };
+    Ok(store::first::<Value>(
+        database,
+        "SELECT submission_id FROM submissions WHERE submission_id=?1 AND app_id=?2
+          AND state IN ('changes_required','rejected')",
+        &[store::value(previous_submission_id), store::value(app_id)],
+    )
+    .await?
+    .is_some())
+}
+
 async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let actor = match require_developer_actor(&req, &ctx.env).await? {
         Ok(actor) => actor,
@@ -1028,6 +1046,15 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
     else {
         return error("BUILD_NOT_FOUND", "Build not found", 404);
     };
+    if !valid_previous_submission(&database, app_id, input.previous_submission_id.as_deref())
+        .await?
+    {
+        return error(
+            "PREVIOUS_SUBMISSION_INVALID",
+            "Previous Submission must be a Changes Required or Rejected Submission for this App",
+            422,
+        );
+    }
     let capabilities = value_str(&build, "capabilities_json")
         .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
         .unwrap_or_default();
@@ -1168,6 +1195,19 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
     else {
         return error("BUILD_NOT_FOUND", "Build not found", 404);
     };
+    if !valid_previous_submission(
+        &database,
+        value_str(&owned, "app_id").unwrap_or(""),
+        input.previous_submission_id.as_deref(),
+    )
+    .await?
+    {
+        return error(
+            "PREVIOUS_SUBMISSION_INVALID",
+            "Previous Submission must be a Changes Required or Rejected Submission for this App",
+            422,
+        );
+    }
     let capabilities = value_str(&build, "capabilities_json")
         .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
         .unwrap_or_default();
@@ -1238,9 +1278,12 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
                 d.external_updates_explanation,d.requires_login,d.test_account,d.test_instructions,
                 (SELECT COUNT(*) FROM submission_screenshots x WHERE x.submission_id=s.submission_id) screenshot_count,
                 (SELECT COUNT(*) FROM submission_screenshots x WHERE x.submission_id=s.submission_id AND x.contains_actual_app_ui=1) actual_ui_count,
-                (SELECT COUNT(*) FROM submission_network_domains x WHERE x.submission_id=s.submission_id) domain_count
+                (SELECT COUNT(*) FROM submission_network_domains x WHERE x.submission_id=s.submission_id) domain_count,
+                (SELECT COUNT(*) FROM published_versions p WHERE p.app_id=s.app_id) published_count,
+                COALESCE(v.status,'not_available') availability_status
            FROM submissions s JOIN submission_details d USING(submission_id)
            JOIN app_builds b ON b.build_id=s.build_id JOIN apps a ON a.app_id=s.app_id
+           LEFT JOIN app_availability v ON v.app_id=s.app_id
           WHERE s.submission_id=?1 AND a.bundle_id=?2 AND a.developer_id=?3",
         &[store::value(submission_id), store::value(bundle_id), store::value(&actor.developer_id)],
     ).await? else {
@@ -1291,6 +1334,24 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
             "SUBMISSION_INCOMPLETE",
             "Required review information is incomplete",
             422,
+        );
+    }
+    let kind = value_str(&submission, "submission_kind").unwrap_or("");
+    let availability = value_str(&submission, "availability_status").unwrap_or("not_available");
+    let published_count = number("published_count");
+    let kind_matches_lifecycle = match kind {
+        "new_app" => published_count == 0,
+        "update" => published_count > 0 && availability == "available",
+        "re_review" => {
+            published_count > 0 && matches!(availability, "developer_unpublished" | "removed")
+        }
+        _ => false,
+    };
+    if !kind_matches_lifecycle {
+        return error(
+            "SUBMISSION_KIND_INVALID",
+            "Submission kind does not match the App publication lifecycle",
+            409,
         );
     }
     if store::first::<Value>(
@@ -1537,6 +1598,119 @@ async fn developer_unpublish(mut req: Request, ctx: RouteContext<()>) -> Result<
     )
 }
 
+async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let input: CertificateReplacementInput = req.json().await?;
+    if input.confirmation != "REPLACE" || input.certificate_id.trim().is_empty() {
+        return error(
+            "CERTIFICATE_REPLACEMENT_CONFIRMATION_REQUIRED",
+            "New certificate and REPLACE confirmation are required",
+            422,
+        );
+    }
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    let Some(current) = store::first::<Value>(
+        &database,
+        "SELECT a.app_id,c.certificate_id FROM apps a JOIN app_certificates c ON c.app_id=a.app_id
+          WHERE a.bundle_id=?1 AND a.developer_id=?2 AND c.is_current=1",
+        &[store::value(bundle_id), store::value(&actor.developer_id)],
+    )
+    .await?
+    else {
+        return error(
+            "APP_CERTIFICATE_NOT_FOUND",
+            "App certificate not found",
+            404,
+        );
+    };
+    let current_id = value_str(&current, "certificate_id").unwrap_or("");
+    if current_id == input.certificate_id.trim() {
+        return error(
+            "CERTIFICATE_ALREADY_ASSIGNED",
+            "The certificate is already assigned to this App",
+            409,
+        );
+    }
+    let Some(current_status) = auth::certificate_status(&ctx.env, current_id).await? else {
+        return error(
+            "CURRENT_CERTIFICATE_STATUS_UNAVAILABLE",
+            "Current certificate status is unavailable",
+            503,
+        );
+    };
+    if current_status.developer_record_id != actor.developer_id
+        || current_status.status != "revoked"
+    {
+        return error(
+            "CURRENT_CERTIFICATE_NOT_REVOKED",
+            "The current certificate must be revoked before replacement",
+            409,
+        );
+    }
+    if auth::certificate_identity(&ctx.env, input.certificate_id.trim(), &actor.developer_id)
+        .await?
+        .is_none()
+    {
+        return error(
+            "REPLACEMENT_CERTIFICATE_INVALID",
+            "The replacement certificate must be active and belong to this Developer",
+            403,
+        );
+    }
+    let app_id = value_str(&current, "app_id").unwrap_or("");
+    let timestamp = now();
+    let result = database
+        .batch(vec![
+            database
+                .prepare(
+                    "UPDATE app_certificates SET is_current=0,observed_status='revoked',
+                       last_verified_at=?1 WHERE app_id=?2 AND certificate_id=?3 AND is_current=1",
+                )
+                .bind(&[
+                    store::number(timestamp),
+                    store::value(app_id),
+                    store::value(current_id),
+                ])?,
+            database
+                .prepare(
+                    "INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,
+                       assigned_at,last_verified_at,observed_status,is_current)
+                     VALUES(?1,?2,?3,?4,?4,'active',1)",
+                )
+                .bind(&[
+                    store::value(app_id),
+                    store::value(input.certificate_id.trim()),
+                    store::value(&actor.account_id),
+                    store::number(timestamp),
+                ])?,
+            store::audit_statement(
+                &database,
+                Some(&actor.account_id),
+                "app.certificate_replaced",
+                "app",
+                bundle_id,
+                json!({"developer_id":actor.developer_id,"previous_certificate_id":current_id,"certificate_id":input.certificate_id}),
+                timestamp,
+            )?,
+        ])
+        .await;
+    if result.is_err() {
+        return error(
+            "CERTIFICATE_REPLACEMENT_CONFLICT",
+            "The replacement certificate is already assigned or the current assignment changed",
+            409,
+        );
+    }
+    json_response(
+        &json!({"bundle_id":bundle_id,"certificate_id":input.certificate_id,"status":"active"}),
+        200,
+    )
+}
+
 async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
     if let Some(response) =
         rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "release-register").await?
@@ -1584,7 +1758,7 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let assigned_certificate: Option<Value> = store::first(
         &database,
-        "SELECT certificate_id,observed_status FROM app_certificates WHERE app_id=?1",
+        "SELECT certificate_id,observed_status FROM app_certificates WHERE app_id=?1 AND is_current=1",
         &[store::value(&app_id)],
     )
     .await?;
@@ -3527,6 +3701,10 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async(
             "/v1/developer/apps/:bundle_id/unpublish",
             developer_unpublish,
+        )
+        .patch_async(
+            "/v1/developer/apps/:bundle_id/certificate",
+            replace_app_certificate,
         )
         .post_async("/v1/developer/apps/:bundle_id/team", assign_team)
         .get_async(

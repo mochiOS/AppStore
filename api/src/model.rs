@@ -310,6 +310,13 @@ pub struct UnpublishInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct CertificateReplacementInput {
+    pub certificate_id: String,
+    pub confirmation: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReviewDecisionInput {
     pub decision: String,
     pub reason: String,

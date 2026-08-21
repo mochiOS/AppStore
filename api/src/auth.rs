@@ -107,6 +107,40 @@ pub struct CertificateIdentity {
     pub issuance_source: String,
 }
 
+#[derive(Debug)]
+pub struct CertificateStatus {
+    pub status: String,
+    pub developer_record_id: String,
+}
+
+pub async fn certificate_status(
+    env: &worker::Env,
+    certificate_id: &str,
+) -> Result<Option<CertificateStatus>> {
+    let request = Request::new(
+        &format!("https://developer-ca/v1/certificates/{certificate_id}/status"),
+        Method::Get,
+    )?;
+    let mut response = env.service("DEVELOPER_CA")?.fetch_request(request).await?;
+    if response.status_code() != 200 {
+        return Ok(None);
+    }
+    let value: serde_json::Value = response.json().await?;
+    let Some(status) = value.get("status").and_then(serde_json::Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(developer_record_id) = value
+        .get("developer_record_id")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(CertificateStatus {
+        status: status.to_owned(),
+        developer_record_id: developer_record_id.to_owned(),
+    }))
+}
+
 fn certificate_serial(value: &serde_json::Value) -> Option<String> {
     let serial = match value.get("serial_number")? {
         serde_json::Value::Number(number) => number.as_u64()?,

@@ -15,6 +15,188 @@ const REMOVE_PRICE_AND_MINIMUM_OS: &str =
 const BACKFILL_BUNDLE_RESERVATION_AUDITS: &str =
     include_str!("../migrations/0010_backfill_bundle_reservation_audits.sql");
 const NOTIFICATION_READS: &str = include_str!("../migrations/0011_notification_reads.sql");
+const SUBMISSION_WORKFLOW: &str = include_str!("../migrations/0012_submission_workflow.sql");
+
+fn apply_all_migrations(connection: &Connection) {
+    for migration in [
+        INITIAL,
+        GITHUB_RELEASES,
+        CERTIFICATE_SERIAL,
+        CERTIFICATE_IDENTITY,
+        UUID_DEVELOPER_IDS,
+        PACKAGE_SUSPENSIONS,
+        RELEASE_VALIDATION_REPORTS,
+        VALIDATION_ATTEMPT_LEASES,
+        REMOVE_PRICE_AND_MINIMUM_OS,
+        BACKFILL_BUNDLE_RESERVATION_AUDITS,
+        NOTIFICATION_READS,
+        SUBMISSION_WORKFLOW,
+    ] {
+        connection
+            .execute_batch(migration)
+            .expect("apply migration");
+    }
+}
+
+fn insert_workflow_fixture(connection: &Connection) {
+    connection
+        .execute_batch(
+            "INSERT INTO bundle_ids VALUES('org.mochios.example','developer','Example','active',1);
+         INSERT INTO apps(app_id,bundle_id,developer_id,display_name,created_at,updated_at)
+           VALUES('app','org.mochios.example','developer','Example',1,1);
+         INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,assigned_at)
+           VALUES('app','cert-one','account',1);",
+        )
+        .unwrap();
+}
+
+#[test]
+fn workflow_separates_builds_submissions_reviews_and_availability() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    apply_all_migrations(&connection);
+    insert_workflow_fixture(&connection);
+
+    connection.execute_batch(
+        "INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
+           github_repository_id,github_repository,github_release_id,github_release_tag,
+           github_asset_id,asset_name,download_url,file_size,registered_by_account_id,created_at)
+         VALUES
+           ('build-one','app','cert-one','1.0.0',1,1,'example/app',10,'v1',100,
+            'app-1.mpkg','https://github.com/example/app/releases/download/v1/app-1.mpkg',10,'account',1),
+           ('build-two','app','cert-one','1.0.0',2,1,'example/app',11,'v1-retry',101,
+            'app-2.mpkg','https://github.com/example/app/releases/download/v1-retry/app-2.mpkg',10,'account',2);
+         INSERT INTO submissions(submission_id,app_id,build_id,version,submission_number,
+           submission_kind,state,created_by_account_id,created_at,updated_at)
+         VALUES
+           ('submission-one','app','build-one','1.0.0',1,'new_app','changes_required','account',1,1),
+           ('submission-two','app','build-two','1.0.0',2,'new_app','submitted','account',2,2);",
+    ).unwrap();
+
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM app_builds WHERE app_id='app' AND version='1.0.0'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM submissions WHERE app_id='app' AND version='1.0.0'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+
+    connection
+        .execute(
+            "INSERT INTO published_versions VALUES('app','1.0.0','submission-one',3)",
+            [],
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO published_versions VALUES('app','1.0.0','submission-two',4)",
+                []
+            )
+            .is_err()
+    );
+
+    connection.execute(
+        "INSERT INTO app_availability VALUES('app','available','submission-one',NULL,'reviewer',3)", []).unwrap();
+    connection.execute(
+        "UPDATE app_availability SET status='developer_unpublished',reason='Developer request',changed_at=4 WHERE app_id='app'", []).unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT status FROM app_availability WHERE app_id='app'",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+        "developer_unpublished"
+    );
+}
+
+#[test]
+fn workflow_enforces_certificate_domain_and_append_only_history_invariants() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    apply_all_migrations(&connection);
+    insert_workflow_fixture(&connection);
+
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO app_certificates VALUES('app','cert-two','account',2,NULL,'active')",
+                []
+            )
+            .is_err()
+    );
+
+    connection.execute_batch(
+        "INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
+           github_repository_id,github_repository,github_release_id,github_release_tag,
+           github_asset_id,asset_name,download_url,file_size,registered_by_account_id,created_at)
+         VALUES('build','app','cert-one','1.0.0',1,1,'example/app',10,'v1',100,
+           'app.mpkg','https://github.com/example/app/releases/download/v1/app.mpkg',10,'account',1);
+         INSERT INTO submissions(submission_id,app_id,build_id,version,submission_number,
+           submission_kind,state,created_by_account_id,created_at,updated_at)
+         VALUES('submission','app','build','1.0.0',1,'new_app','in_review','account',1,1);
+         INSERT INTO submission_reviews VALUES('review','submission','reviewer','changes_required','Fix metadata',2);
+         INSERT INTO availability_history VALUES('event','app',NULL,'removed','Policy violation','reviewer',3);
+         INSERT INTO app_acquisitions VALUES('app','customer',4);",
+    ).unwrap();
+
+    assert!(
+        connection
+            .execute(
+                "INSERT INTO submission_network_domains VALUES('submission','*.example.com')",
+                []
+            )
+            .is_err()
+    );
+    connection
+        .execute(
+            "INSERT INTO submission_network_domains VALUES('submission','api.example.com')",
+            [],
+        )
+        .unwrap();
+    assert!(
+        connection
+            .execute(
+                "UPDATE submission_reviews SET reason='tampered' WHERE review_id='review'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "DELETE FROM availability_history WHERE event_id='event'",
+                []
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute("DELETE FROM app_acquisitions WHERE app_id='app'", [])
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE submissions SET state='unknown' WHERE submission_id='submission'",
+                []
+            )
+            .is_err()
+    );
+}
 
 #[test]
 fn package_suspension_is_reversible() {

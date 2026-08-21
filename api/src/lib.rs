@@ -850,10 +850,12 @@ fn draft_detail_statements(
 async fn submission_payload(database: &D1Database, submission_id: &str) -> Result<Option<Value>> {
     let Some(mut submission) = store::first::<Value>(
         database,
-        "SELECT s.*,d.*,b.machine_status,b.github_repository,b.github_release_tag,b.asset_name,
-                b.file_size,b.sha256,b.package_digest,b.manifest_digest,b.certificate_id
+        "SELECT s.*,d.*,a.bundle_id,a.developer_id,b.machine_status,b.github_repository,
+                b.github_release_tag,b.asset_name,b.file_size,b.sha256,b.package_digest,
+                b.manifest_digest,b.certificate_id
            FROM submissions s JOIN submission_details d USING(submission_id)
-           JOIN app_builds b ON b.build_id=s.build_id WHERE s.submission_id=?1",
+           JOIN apps a ON a.app_id=s.app_id JOIN app_builds b ON b.build_id=s.build_id
+          WHERE s.submission_id=?1",
         &[store::value(submission_id)],
     )
     .await?

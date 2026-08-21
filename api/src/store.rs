@@ -112,7 +112,10 @@ pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<Rel
 pub async fn developer_apps(db: &D1Database, developer_id: &str) -> Result<Vec<Value>> {
     rows(
         db,
-        "SELECT * FROM apps WHERE developer_id=?1 ORDER BY created_at DESC",
+        "SELECT a.*,COALESCE(v.status,'not_available') AS availability_status,
+                v.reason AS availability_reason,v.changed_at AS availability_changed_at
+           FROM apps a LEFT JOIN app_availability v ON v.app_id=a.app_id
+          WHERE a.developer_id=?1 ORDER BY a.created_at DESC",
         &[value(developer_id)],
     )
     .await
@@ -125,7 +128,10 @@ pub async fn developer_app(
 ) -> Result<Option<Value>> {
     first(
         db,
-        "SELECT * FROM apps WHERE developer_id=?1 AND bundle_id=?2 LIMIT 1",
+        "SELECT a.*,COALESCE(v.status,'not_available') AS availability_status,
+                v.reason AS availability_reason,v.changed_at AS availability_changed_at
+           FROM apps a LEFT JOIN app_availability v ON v.app_id=a.app_id
+          WHERE a.developer_id=?1 AND a.bundle_id=?2 LIMIT 1",
         &[value(developer_id), value(bundle_id)],
     )
     .await

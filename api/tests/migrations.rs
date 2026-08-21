@@ -199,6 +199,52 @@ fn workflow_enforces_certificate_domain_and_append_only_history_invariants() {
 }
 
 #[test]
+fn legacy_reviewer_results_are_projected_to_builds() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    apply_all_migrations(&connection);
+    insert_workflow_fixture(&connection);
+    connection.execute_batch(
+        "INSERT INTO releases(release_id,bundle_id,version,github_asset_id,file_size,
+           developer_certificate_id,developer_public_key,created_at)
+         VALUES('rel','org.mochios.example','1.0.0',100,10,'cert-one','public',1);
+         INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
+           github_repository_id,github_repository,github_release_id,github_release_tag,
+           github_asset_id,asset_name,download_url,file_size,registered_by_account_id,created_at)
+         VALUES('rel','app','cert-one','1.0.0',1,1,'example/app',10,'v1',100,
+           'app.mpkg','https://github.com/example/app/releases/download/v1/app.mpkg',10,'account',1);
+         UPDATE releases SET validation_status='valid',sha256='asset',package_digest='package',
+           manifest_hash='manifest',capabilities_json='[\"window.create\"]',reviewer_version='1.0',
+           validated_at=2 WHERE release_id='rel';",
+    ).unwrap();
+    let result = connection
+        .query_row(
+            "SELECT machine_status,sha256,package_digest,manifest_digest,capabilities_json
+           FROM app_builds WHERE build_id='rel'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        result,
+        (
+            "valid".into(),
+            "asset".into(),
+            "package".into(),
+            "manifest".into(),
+            "[\"window.create\"]".into()
+        )
+    );
+}
+
+#[test]
 fn package_suspension_is_reversible() {
     let connection = Connection::open_in_memory().expect("open migration fixture");
     connection.execute_batch(INITIAL).unwrap();

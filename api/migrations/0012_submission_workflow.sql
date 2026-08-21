@@ -245,3 +245,20 @@ BEGIN SELECT RAISE(ABORT, 'app acquisitions are append-only'); END;
 
 CREATE TRIGGER app_acquisitions_no_delete BEFORE DELETE ON app_acquisitions
 BEGIN SELECT RAISE(ABORT, 'app acquisitions are append-only'); END;
+
+CREATE TRIGGER legacy_release_validation_sync
+AFTER UPDATE OF validation_status,sha256,package_digest,manifest_hash,capabilities_json,
+  payloads_json,validation_message,reviewer_version,validated_at ON releases
+BEGIN
+  UPDATE app_builds
+     SET machine_status=NEW.validation_status,
+         sha256=NEW.sha256,
+         package_digest=NEW.package_digest,
+         manifest_digest=NEW.manifest_hash,
+         capabilities_json=NEW.capabilities_json,
+         payloads_json=NEW.payloads_json,
+         machine_message=NEW.validation_message,
+         reviewer_version=NEW.reviewer_version,
+         validated_at=NEW.validated_at
+   WHERE build_id=NEW.release_id;
+END;

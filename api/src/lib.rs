@@ -1471,16 +1471,18 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let developer = actor.developer_id.clone();
     let bundle_id = param(&ctx, "bundle_id").to_string();
+    let database = db(&ctx)?;
     let active_app: Option<Value> = store::first(
-        &db(&ctx)?,
+        &database,
         "SELECT a.app_id FROM apps a JOIN bundle_ids b ON b.bundle_id=a.bundle_id
          WHERE a.developer_id=?1 AND a.bundle_id=?2 AND b.status='active' LIMIT 1",
         &[store::value(&developer), store::value(&bundle_id)],
     )
     .await?;
-    if active_app.is_none() {
+    let Some(active_app) = active_app else {
         return error("APP_NOT_FOUND", "App not found", 404);
-    }
+    };
+    let app_id = value_str(&active_app, "app_id").unwrap_or("").to_owned();
     let input: ReleaseInput = req.json().await?;
     let Some((owner, repository)) = github_repository(input.repository.trim()) else {
         return error("VALIDATION_ERROR", "GitHub repository is invalid", 422);
@@ -1502,6 +1504,22 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             403,
         );
     };
+    let assigned_certificate: Option<Value> = store::first(
+        &database,
+        "SELECT certificate_id,observed_status FROM app_certificates WHERE app_id=?1",
+        &[store::value(&app_id)],
+    )
+    .await?;
+    if let Some(assigned) = assigned_certificate.as_ref()
+        && (value_str(assigned, "certificate_id") != Some(input.certificate_id.trim())
+            || value_str(assigned, "observed_status") != Some("active"))
+    {
+        return error(
+            "APP_CERTIFICATE_MISMATCH",
+            "Each App must keep its assigned active Developer Certificate",
+            409,
+        );
+    }
     let lookup = GitHubReleaseAssetRequest {
         owner,
         repository,
@@ -1553,9 +1571,21 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let release_id = id("rel");
     let timestamp = now();
-    let result = store::run(
-        &db(&ctx)?,
-        "INSERT INTO releases(
+    let build_sequence: Option<Value> = store::first(
+        &database,
+        "SELECT COALESCE(MAX(build_number),0)+1 AS value FROM app_builds
+          WHERE app_id=?1 AND version=?2",
+        &[store::value(&app_id), store::value(input.version.trim())],
+    )
+    .await?;
+    let build_number = build_sequence
+        .as_ref()
+        .and_then(|value| value.get("value"))
+        .and_then(Value::as_f64)
+        .unwrap_or(1.0) as i64;
+    let release_statement = database
+        .prepare(
+            "INSERT INTO releases(
            release_id,bundle_id,version,github_repository_id,github_repository,
            github_release_id,github_release_tag,github_release_immutable,github_prerelease,
            github_asset_id,asset_name,download_url,file_size,github_digest,
@@ -1566,7 +1596,8 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
            changelog,
            registered_by,registered_by_account_id,developer_display_name,created_at)
          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
-        &[
+        )
+        .bind(&[
             store::value(&release_id),
             store::value(&bundle_id),
             store::value(input.version.trim()),
@@ -1602,28 +1633,69 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             store::value(&actor.account_id),
             store::value(&actor.display_name),
             store::number(timestamp),
-        ],
-    )
-    .await;
-    if result.is_err() {
-        return error(
-            "RELEASE_ALREADY_EXISTS",
-            "Release version already exists",
-            409,
+        ])?;
+    let build_statement = database
+        .prepare(
+            "INSERT INTO app_builds(
+               build_id,app_id,certificate_id,version,build_number,github_repository_id,
+               github_repository,github_release_id,github_release_tag,github_asset_id,
+               asset_name,download_url,file_size,machine_status,registered_by_account_id,created_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'pending',?14,?15)",
+        )
+        .bind(&[
+            store::value(&release_id),
+            store::value(&app_id),
+            store::value(input.certificate_id.trim()),
+            store::value(input.version.trim()),
+            store::number(build_number),
+            store::value(repository_id),
+            store::value(&asset.repository),
+            store::value(github_release_id),
+            store::value(&asset.release_tag),
+            store::value(github_asset_id),
+            store::value(&asset.asset_name),
+            store::value(&asset.download_url),
+            store::value(asset.file_size as f64),
+            store::value(&actor.account_id),
+            store::number(timestamp),
+        ])?;
+    let mut statements = Vec::new();
+    if assigned_certificate.is_none() {
+        statements.push(
+            database
+                .prepare(
+                    "INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,
+                       assigned_at,last_verified_at,observed_status)
+                     VALUES(?1,?2,?3,?4,?4,'active')",
+                )
+                .bind(&[
+                    store::value(&app_id),
+                    store::value(input.certificate_id.trim()),
+                    store::value(&actor.account_id),
+                    store::number(timestamp),
+                ])?,
         );
     }
-    store::audit(
-        &db(&ctx)?,
+    statements.push(release_statement);
+    statements.push(build_statement);
+    statements.push(store::audit_statement(
+        &database,
         Some(&actor.account_id),
         "release.create",
         "release",
         &release_id,
         json!({"developer_id":developer,"developer_role":actor.role,"package_id":bundle_id,"version":input.version,"asset_id":asset.asset_id,"result":"registered"}),
         timestamp,
-    )
-    .await?;
+    )?);
+    if database.batch(statements).await.is_err() {
+        return error(
+            "RELEASE_ALREADY_EXISTS",
+            "Release version, Build number, or GitHub asset already exists",
+            409,
+        );
+    }
     json_response(
-        &json!({"release_id":release_id,"validation_status":"pending","review_status":"pending","publish_status":"draft"}),
+        &json!({"release_id":release_id,"build_id":release_id,"build_number":build_number,"validation_status":"pending","review_status":"pending","publish_status":"draft"}),
         201,
     )
 }

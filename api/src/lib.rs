@@ -134,6 +134,71 @@ fn valid_app_metadata(
         && matches!(kind, "app" | "game")
 }
 
+fn valid_submission_draft(input: &SubmissionDraftInput) -> bool {
+    let domains = input
+        .external_domains
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let declarations = workflow::DeclarationSummary {
+        external_communication: input.external_communication,
+        external_communication_reason: input.external_communication_reason.as_deref(),
+        external_communication_purpose: input.external_communication_purpose.as_deref(),
+        external_domains: &domains,
+        collects_data: input.collects_data,
+        data_collection_description: input.data_collection_description.as_deref(),
+        executes_dynamic_code: input.executes_dynamic_code,
+        dynamic_code_explanation: input.dynamic_code_explanation.as_deref(),
+        uses_external_updates: input.uses_external_updates,
+        external_updates_explanation: input.external_updates_explanation.as_deref(),
+        tracks_across_services: input.tracks_across_services,
+        tracking_user_consent: input.tracking_user_consent,
+        uses_location_for_advertising: input.uses_location_for_advertising,
+        requires_login: input.requires_login,
+        test_account: input.test_account.as_deref(),
+        test_instructions: input.test_instructions.as_deref(),
+    };
+    workflow::valid_app_name(&input.app_name)
+        && workflow::valid_release_channel_name(&input.app_name, &input.release_channel)
+        && input.developer_name.trim().chars().count() <= 128
+        && !input.developer_name.trim().is_empty()
+        && !input.description.trim().is_empty()
+        && input.description.trim().chars().count() <= 4000
+        && valid_icon_url(Some(&input.icon_url))
+        && workflow::valid_icon(&input.icon_media_type, input.icon_width, input.icon_height)
+        && workflow::valid_screenshot_set(
+            input.screenshots.len(),
+            input
+                .screenshots
+                .iter()
+                .filter(|screenshot| screenshot.contains_actual_app_ui)
+                .count(),
+        )
+        && input
+            .screenshots
+            .iter()
+            .all(|screenshot| valid_icon_url(Some(&screenshot.image_url)))
+        && matches!(input.kind.as_str(), "app" | "game")
+        && matches!(
+            input.submission_kind.as_str(),
+            "new_app" | "update" | "re_review"
+        )
+        && input.primary_purpose == "general"
+        && input.content_declarations.is_object()
+        && valid_optional_text(input.category.as_deref(), 80)
+        && valid_optional_text(input.age_rating.as_deref(), 40)
+        && input
+            .capability_reasons
+            .values()
+            .all(|reason| reason.trim().chars().count() <= 2000)
+        && input.data_categories.iter().all(|category| {
+            !category.category.trim().is_empty()
+                && category.category.trim().chars().count() <= 80
+                && valid_optional_text(category.details.as_deref(), 2000)
+        })
+        && workflow::valid_declarations(&declarations)
+}
+
 fn optional_value(value: Option<&str>) -> worker::wasm_bindgen::JsValue {
     value
         .map(str::trim)
@@ -643,6 +708,753 @@ async fn developer_app(req: Request, ctx: RouteContext<()>) -> Result<Response> 
         .await?;
     json_response(
         &json!({"app":store::developer_app(&database, &developer, bundle_id).await?}),
+        200,
+    )
+}
+
+fn bool_value(value: bool) -> worker::wasm_bindgen::JsValue {
+    store::number(i64::from(value))
+}
+
+fn draft_detail_statements(
+    database: &D1Database,
+    submission_id: &str,
+    input: &SubmissionDraftInput,
+    capabilities: &[String],
+    replace: bool,
+) -> Result<Vec<worker::D1PreparedStatement>> {
+    let mut statements = Vec::new();
+    if replace {
+        for table in [
+            "submission_screenshots",
+            "submission_capabilities",
+            "submission_network_domains",
+            "submission_data_categories",
+            "submission_details",
+        ] {
+            statements.push(
+                database
+                    .prepare(format!("DELETE FROM {table} WHERE submission_id=?1"))
+                    .bind(&[store::value(submission_id)])?,
+            );
+        }
+    }
+    statements.push(
+        database.prepare(
+            "INSERT INTO submission_details(
+               submission_id,app_name,developer_name,description,icon_url,icon_media_type,
+               icon_width,icon_height,category,kind,release_channel,primary_purpose,age_rating,
+               external_communication,external_communication_reason,external_communication_purpose,
+               collects_data,data_collection_description,uses_advertising,uses_analytics,
+               tracks_across_services,tracking_user_consent,uses_location_for_advertising,
+               has_payments,content_declarations_json,executes_dynamic_code,dynamic_code_explanation,
+               uses_external_updates,external_updates_explanation,is_emulator,is_virtual_machine,
+               supports_plugins,is_external_app_store,uses_ai_generated_content,
+               disclose_ai_generated_content,reviewer_notes,requires_login,test_account,test_instructions)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,
+                    ?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,?34,
+                    ?35,?36,?37,?38,?39)",
+        ).bind(&[
+            store::value(submission_id),
+            store::value(input.app_name.trim()),
+            store::value(input.developer_name.trim()),
+            store::value(input.description.trim()),
+            store::value(input.icon_url.trim()),
+            store::value(&input.icon_media_type),
+            store::number(input.icon_width as i64),
+            store::number(input.icon_height as i64),
+            optional_value(input.category.as_deref()),
+            store::value(&input.kind),
+            store::value(&input.release_channel),
+            store::value(&input.primary_purpose),
+            optional_value(input.age_rating.as_deref()),
+            bool_value(input.external_communication),
+            optional_value(input.external_communication_reason.as_deref()),
+            optional_value(input.external_communication_purpose.as_deref()),
+            bool_value(input.collects_data),
+            optional_value(input.data_collection_description.as_deref()),
+            bool_value(input.uses_advertising),
+            bool_value(input.uses_analytics),
+            bool_value(input.tracks_across_services),
+            bool_value(input.tracking_user_consent),
+            bool_value(input.uses_location_for_advertising),
+            bool_value(input.has_payments),
+            store::value(input.content_declarations.to_string()),
+            bool_value(input.executes_dynamic_code),
+            optional_value(input.dynamic_code_explanation.as_deref()),
+            bool_value(input.uses_external_updates),
+            optional_value(input.external_updates_explanation.as_deref()),
+            bool_value(input.is_emulator),
+            bool_value(input.is_virtual_machine),
+            bool_value(input.supports_plugins),
+            bool_value(input.is_external_app_store),
+            bool_value(input.uses_ai_generated_content),
+            bool_value(input.disclose_ai_generated_content),
+            optional_value(input.reviewer_notes.as_deref()),
+            bool_value(input.requires_login),
+            optional_value(input.test_account.as_deref()),
+            optional_value(input.test_instructions.as_deref()),
+        ])?,
+    );
+    for (position, screenshot) in input.screenshots.iter().enumerate() {
+        statements.push(
+            database.prepare(
+                "INSERT INTO submission_screenshots(submission_id,position,image_url,contains_actual_app_ui)
+                 VALUES(?1,?2,?3,?4)",
+            ).bind(&[
+                store::value(submission_id),
+                store::number(position as i64),
+                store::value(screenshot.image_url.trim()),
+                bool_value(screenshot.contains_actual_app_ui),
+            ])?,
+        );
+    }
+    for capability in capabilities {
+        statements.push(
+            database.prepare(
+                "INSERT INTO submission_capabilities(submission_id,capability,source,usage_reason)
+                 VALUES(?1,?2,'manifest',?3)",
+            ).bind(&[
+                store::value(submission_id),
+                store::value(capability),
+                optional_value(input.capability_reasons.get(capability).map(String::as_str)),
+            ])?,
+        );
+    }
+    for domain in &input.external_domains {
+        statements.push(
+            database
+                .prepare(
+                    "INSERT INTO submission_network_domains(submission_id,domain) VALUES(?1,?2)",
+                )
+                .bind(&[store::value(submission_id), store::value(domain.trim())])?,
+        );
+    }
+    for category in &input.data_categories {
+        statements.push(
+            database
+                .prepare(
+                    "INSERT INTO submission_data_categories(submission_id,category,details)
+                 VALUES(?1,?2,?3)",
+                )
+                .bind(&[
+                    store::value(submission_id),
+                    store::value(category.category.trim()),
+                    optional_value(category.details.as_deref()),
+                ])?,
+        );
+    }
+    Ok(statements)
+}
+
+async fn submission_payload(database: &D1Database, submission_id: &str) -> Result<Option<Value>> {
+    let Some(mut submission) = store::first::<Value>(
+        database,
+        "SELECT s.*,d.*,b.machine_status,b.github_repository,b.github_release_tag,b.asset_name,
+                b.file_size,b.sha256,b.package_digest,b.manifest_digest,b.certificate_id
+           FROM submissions s JOIN submission_details d USING(submission_id)
+           JOIN app_builds b ON b.build_id=s.build_id WHERE s.submission_id=?1",
+        &[store::value(submission_id)],
+    )
+    .await?
+    else {
+        return Ok(None);
+    };
+    for (key, table, columns) in [
+        (
+            "screenshots",
+            "submission_screenshots",
+            "position,image_url,contains_actual_app_ui",
+        ),
+        (
+            "capabilities",
+            "submission_capabilities",
+            "capability,source,usage_reason",
+        ),
+        ("external_domains", "submission_network_domains", "domain"),
+        (
+            "data_categories",
+            "submission_data_categories",
+            "category,details",
+        ),
+        (
+            "reviews",
+            "submission_reviews",
+            "review_id,reviewer_account_id,decision,reason,created_at",
+        ),
+        (
+            "messages",
+            "submission_messages",
+            "message_id,author_account_id,author_role,body,created_at",
+        ),
+    ] {
+        let order = match table {
+            "submission_screenshots" => "position",
+            "submission_reviews" | "submission_messages" => "created_at",
+            _ => "1",
+        };
+        let rows: Vec<Value> = store::rows(
+            database,
+            &format!("SELECT {columns} FROM {table} WHERE submission_id=?1 ORDER BY {order}"),
+            &[store::value(submission_id)],
+        )
+        .await?;
+        submission[key] = Value::Array(rows);
+    }
+    Ok(Some(submission))
+}
+
+async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    let Some(app) = store::first::<Value>(
+        &database,
+        "SELECT app_id FROM apps WHERE bundle_id=?1 AND developer_id=?2",
+        &[store::value(bundle_id), store::value(&actor.developer_id)],
+    )
+    .await?
+    else {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    };
+    let app_id = value_str(&app, "app_id").unwrap_or("");
+    if req.method() == Method::Get {
+        let submissions: Vec<Value> = store::rows(
+            &database,
+            "SELECT s.submission_id,s.build_id,s.version,s.submission_number,s.submission_kind,
+                    s.state,s.previous_submission_id,s.created_at,s.updated_at,s.submitted_at,
+                    d.app_name,b.machine_status
+               FROM submissions s JOIN submission_details d USING(submission_id)
+               JOIN app_builds b ON b.build_id=s.build_id
+              WHERE s.app_id=?1 ORDER BY s.created_at DESC,s.submission_number DESC",
+            &[store::value(app_id)],
+        )
+        .await?;
+        return json_response(&json!({"submissions":submissions}), 200);
+    }
+    if let Some(response) =
+        rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "submission-draft").await?
+    {
+        return Ok(response);
+    }
+    let input: SubmissionDraftInput = req.json().await?;
+    if !valid_submission_draft(&input) {
+        return error(
+            "SUBMISSION_INVALID",
+            "Submission information is invalid",
+            422,
+        );
+    }
+    let Some(build) = store::first::<Value>(
+        &database,
+        "SELECT build_id,version,capabilities_json FROM app_builds WHERE build_id=?1 AND app_id=?2",
+        &[store::value(input.build_id.trim()), store::value(app_id)],
+    )
+    .await?
+    else {
+        return error("BUILD_NOT_FOUND", "Build not found", 404);
+    };
+    let capabilities = value_str(&build, "capabilities_json")
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .unwrap_or_default();
+    if input
+        .capability_reasons
+        .keys()
+        .any(|capability| !capabilities.contains(capability))
+    {
+        return error(
+            "CAPABILITY_MISMATCH",
+            "Capabilities must come from the verified Build",
+            422,
+        );
+    }
+    if let Some(previous) = input.previous_submission_id.as_deref() {
+        let valid_previous: Option<Value> = store::first(
+            &database,
+            "SELECT submission_id FROM submissions WHERE submission_id=?1 AND app_id=?2
+              AND state IN ('changes_required','rejected')",
+            &[store::value(previous), store::value(app_id)],
+        )
+        .await?;
+        if valid_previous.is_none() {
+            return error(
+                "PREVIOUS_SUBMISSION_INVALID",
+                "Previous Submission cannot be reused",
+                409,
+            );
+        }
+    }
+    let sequence: Option<Value> = store::first(
+        &database,
+        "SELECT COALESCE(MAX(submission_number),0)+1 AS value FROM submissions WHERE app_id=?1",
+        &[store::value(app_id)],
+    )
+    .await?;
+    let submission_number = sequence
+        .as_ref()
+        .and_then(|value| value.get("value"))
+        .and_then(Value::as_f64)
+        .unwrap_or(1.0) as i64;
+    let submission_id = id("sub");
+    let timestamp = now();
+    let mut statements = vec![
+        database.prepare(
+            "INSERT INTO submissions(submission_id,app_id,build_id,version,submission_number,
+               submission_kind,state,previous_submission_id,created_by_account_id,created_at,updated_at)
+             VALUES(?1,?2,?3,?4,?5,?6,'draft',?7,?8,?9,?9)",
+        ).bind(&[
+            store::value(&submission_id), store::value(app_id), store::value(input.build_id.trim()),
+            store::value(value_str(&build, "version").unwrap_or("")), store::number(submission_number),
+            store::value(&input.submission_kind), optional_value(input.previous_submission_id.as_deref()),
+            store::value(&actor.account_id), store::number(timestamp),
+        ])?,
+    ];
+    statements.extend(draft_detail_statements(
+        &database,
+        &submission_id,
+        &input,
+        &capabilities,
+        false,
+    )?);
+    statements.push(store::audit_statement(
+        &database,
+        Some(&actor.account_id),
+        "submission.create",
+        "submission",
+        &submission_id,
+        json!({"developer_id":actor.developer_id,"bundle_id":bundle_id}),
+        timestamp,
+    )?);
+    database.batch(statements).await?;
+    json_response(
+        &json!({"submission":submission_payload(&database, &submission_id).await?}),
+        201,
+    )
+}
+
+async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    let submission_id = param(&ctx, "submission_id");
+    let database = db(&ctx)?;
+    let owned: Option<Value> = store::first(
+        &database,
+        "SELECT s.state,s.app_id FROM submissions s JOIN apps a ON a.app_id=s.app_id
+          WHERE s.submission_id=?1 AND a.bundle_id=?2 AND a.developer_id=?3",
+        &[
+            store::value(submission_id),
+            store::value(bundle_id),
+            store::value(&actor.developer_id),
+        ],
+    )
+    .await?;
+    let Some(owned) = owned else {
+        return error("SUBMISSION_NOT_FOUND", "Submission not found", 404);
+    };
+    if req.method() == Method::Get {
+        return json_response(
+            &json!({"submission":submission_payload(&database, submission_id).await?}),
+            200,
+        );
+    }
+    if value_str(&owned, "state") != Some("draft") {
+        return error(
+            "SUBMISSION_NOT_EDITABLE",
+            "Only Draft Submissions can be edited",
+            409,
+        );
+    }
+    let input: SubmissionDraftInput = req.json().await?;
+    if !valid_submission_draft(&input) {
+        return error(
+            "SUBMISSION_INVALID",
+            "Submission information is invalid",
+            422,
+        );
+    }
+    let Some(build) = store::first::<Value>(
+        &database,
+        "SELECT build_id,version,capabilities_json FROM app_builds WHERE build_id=?1 AND app_id=?2",
+        &[
+            store::value(input.build_id.trim()),
+            store::value(value_str(&owned, "app_id").unwrap_or("")),
+        ],
+    )
+    .await?
+    else {
+        return error("BUILD_NOT_FOUND", "Build not found", 404);
+    };
+    let capabilities = value_str(&build, "capabilities_json")
+        .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
+        .unwrap_or_default();
+    if input
+        .capability_reasons
+        .keys()
+        .any(|capability| !capabilities.contains(capability))
+    {
+        return error(
+            "CAPABILITY_MISMATCH",
+            "Capabilities must come from the verified Build",
+            422,
+        );
+    }
+    let timestamp = now();
+    let mut statements = vec![
+        database
+            .prepare(
+                "UPDATE submissions SET build_id=?1,version=?2,submission_kind=?3,
+           previous_submission_id=?4,updated_at=?5 WHERE submission_id=?6 AND state='draft'",
+            )
+            .bind(&[
+                store::value(input.build_id.trim()),
+                store::value(value_str(&build, "version").unwrap_or("")),
+                store::value(&input.submission_kind),
+                optional_value(input.previous_submission_id.as_deref()),
+                store::number(timestamp),
+                store::value(submission_id),
+            ])?,
+    ];
+    statements.extend(draft_detail_statements(
+        &database,
+        submission_id,
+        &input,
+        &capabilities,
+        true,
+    )?);
+    statements.push(store::audit_statement(
+        &database,
+        Some(&actor.account_id),
+        "submission.update",
+        "submission",
+        submission_id,
+        json!({"developer_id":actor.developer_id,"bundle_id":bundle_id}),
+        timestamp,
+    )?);
+    database.batch(statements).await?;
+    json_response(
+        &json!({"submission":submission_payload(&database, submission_id).await?}),
+        200,
+    )
+}
+
+async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    let submission_id = param(&ctx, "submission_id");
+    let database = db(&ctx)?;
+    let Some(submission) = store::first::<Value>(
+        &database,
+        "SELECT s.state,s.version,s.submission_kind,s.app_id,b.machine_status,
+                d.external_communication,d.external_communication_reason,
+                d.external_communication_purpose,d.collects_data,d.data_collection_description,
+                d.executes_dynamic_code,d.dynamic_code_explanation,d.uses_external_updates,
+                d.external_updates_explanation,d.requires_login,d.test_account,d.test_instructions,
+                (SELECT COUNT(*) FROM submission_screenshots x WHERE x.submission_id=s.submission_id) screenshot_count,
+                (SELECT COUNT(*) FROM submission_screenshots x WHERE x.submission_id=s.submission_id AND x.contains_actual_app_ui=1) actual_ui_count,
+                (SELECT COUNT(*) FROM submission_network_domains x WHERE x.submission_id=s.submission_id) domain_count
+           FROM submissions s JOIN submission_details d USING(submission_id)
+           JOIN app_builds b ON b.build_id=s.build_id JOIN apps a ON a.app_id=s.app_id
+          WHERE s.submission_id=?1 AND a.bundle_id=?2 AND a.developer_id=?3",
+        &[store::value(submission_id), store::value(bundle_id), store::value(&actor.developer_id)],
+    ).await? else {
+        return error("SUBMISSION_NOT_FOUND", "Submission not found", 404);
+    };
+    if value_str(&submission, "state") != Some("draft") {
+        return error(
+            "SUBMISSION_NOT_SUBMITTABLE",
+            "Only a Draft can be submitted",
+            409,
+        );
+    }
+    if value_str(&submission, "machine_status") != Some("valid") {
+        return error(
+            "BUILD_NOT_VALIDATED",
+            "Build machine validation must complete first",
+            409,
+        );
+    }
+    let number = |name: &str| {
+        submission
+            .get(name)
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                submission
+                    .get(name)
+                    .and_then(Value::as_f64)
+                    .map(|value| value as i64)
+            })
+            .unwrap_or(0)
+    };
+    let present =
+        |name: &str| value_str(&submission, name).is_some_and(|value| !value.trim().is_empty());
+    let valid_required = number("screenshot_count") >= 3
+        && number("actual_ui_count") >= 1
+        && (number("external_communication") == 0
+            || (present("external_communication_reason")
+                && present("external_communication_purpose")
+                && number("domain_count") >= 1))
+        && (number("collects_data") == 0 || present("data_collection_description"))
+        && (number("executes_dynamic_code") == 0 || present("dynamic_code_explanation"))
+        && (number("uses_external_updates") == 0 || present("external_updates_explanation"))
+        && (number("requires_login") == 0
+            || present("test_account")
+            || present("test_instructions"));
+    if !valid_required {
+        return error(
+            "SUBMISSION_INCOMPLETE",
+            "Required review information is incomplete",
+            422,
+        );
+    }
+    if store::first::<Value>(
+        &database,
+        "SELECT version FROM published_versions WHERE app_id=?1 AND version=?2",
+        &[
+            store::value(value_str(&submission, "app_id").unwrap_or("")),
+            store::value(value_str(&submission, "version").unwrap_or("")),
+        ],
+    )
+    .await?
+    .is_some()
+    {
+        return error(
+            "VERSION_ALREADY_PUBLISHED",
+            "This version has already been published",
+            409,
+        );
+    }
+    let timestamp = now();
+    database
+        .batch(vec![
+            database
+                .prepare(
+                    "UPDATE submissions SET state='submitted',submitted_at=?1,updated_at=?1
+              WHERE submission_id=?2 AND state='draft'",
+                )
+                .bind(&[store::number(timestamp), store::value(submission_id)])?,
+            store::audit_statement(
+                &database,
+                Some(&actor.account_id),
+                "submission.submit",
+                "submission",
+                submission_id,
+                json!({"developer_id":actor.developer_id,"bundle_id":bundle_id}),
+                timestamp,
+            )?,
+        ])
+        .await?;
+    json_response(
+        &json!({"submission":submission_payload(&database, submission_id).await?}),
+        200,
+    )
+}
+
+async fn answer_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    let submission_id = param(&ctx, "submission_id");
+    let input: SubmissionMessageInput = req.json().await?;
+    if input.body.trim().is_empty() || input.body.trim().chars().count() > 8000 {
+        return error("MESSAGE_INVALID", "Additional information is invalid", 422);
+    }
+    let database = db(&ctx)?;
+    let owned: Option<Value> = store::first(
+        &database,
+        "SELECT s.state FROM submissions s JOIN apps a ON a.app_id=s.app_id
+          WHERE s.submission_id=?1 AND a.bundle_id=?2 AND a.developer_id=?3",
+        &[
+            store::value(submission_id),
+            store::value(bundle_id),
+            store::value(&actor.developer_id),
+        ],
+    )
+    .await?;
+    if owned.as_ref().and_then(|value| value_str(value, "state"))
+        != Some("more_information_required")
+    {
+        return error(
+            "INFORMATION_NOT_REQUESTED",
+            "This Submission is not waiting for information",
+            409,
+        );
+    }
+    let timestamp = now();
+    let message_id = id("msg");
+    database.batch(vec![
+        database.prepare(
+            "INSERT INTO submission_messages(message_id,submission_id,author_account_id,author_role,body,created_at)
+             VALUES(?1,?2,?3,'developer',?4,?5)",
+        ).bind(&[
+            store::value(&message_id), store::value(submission_id), store::value(&actor.account_id),
+            store::value(input.body.trim()), store::number(timestamp),
+        ])?,
+        database.prepare(
+            "UPDATE submissions SET state='in_review',updated_at=?1 WHERE submission_id=?2
+              AND state='more_information_required'",
+        ).bind(&[store::number(timestamp), store::value(submission_id)])?,
+        store::audit_statement(
+            &database, Some(&actor.account_id), "submission.information_provided", "submission",
+            submission_id, json!({"developer_id":actor.developer_id,"bundle_id":bundle_id}), timestamp,
+        )?,
+    ]).await?;
+    json_response(&json!({"message_id":message_id,"state":"in_review"}), 201)
+}
+
+async fn developer_appeals(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    let Some(app) = store::first::<Value>(
+        &database,
+        "SELECT app_id FROM apps WHERE bundle_id=?1 AND developer_id=?2",
+        &[store::value(bundle_id), store::value(&actor.developer_id)],
+    )
+    .await?
+    else {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    };
+    let app_id = value_str(&app, "app_id").unwrap_or("");
+    if req.method() == Method::Get {
+        let appeals: Vec<Value> = store::rows(
+            &database,
+            "SELECT * FROM appeals WHERE app_id=?1 ORDER BY created_at DESC",
+            &[store::value(app_id)],
+        )
+        .await?;
+        return json_response(&json!({"appeals":appeals}), 200);
+    }
+    let input: AppealInput = req.json().await?;
+    if input.reason.trim().is_empty()
+        || input.reason.trim().chars().count() > 8000
+        || !matches!(
+            input.appealed_action.as_str(),
+            "review_decision" | "removed"
+        )
+    {
+        return error("APPEAL_INVALID", "Appeal is invalid", 422);
+    }
+    if input.appealed_action == "review_decision" {
+        let Some(submission_id) = input.submission_id.as_deref() else {
+            return error("SUBMISSION_REQUIRED", "Submission is required", 422);
+        };
+        if store::first::<Value>(
+            &database,
+            "SELECT submission_id FROM submissions WHERE submission_id=?1 AND app_id=?2
+              AND state IN ('changes_required','rejected')",
+            &[store::value(submission_id), store::value(app_id)],
+        )
+        .await?
+        .is_none()
+        {
+            return error(
+                "SUBMISSION_NOT_APPEALABLE",
+                "Submission cannot be appealed",
+                409,
+            );
+        }
+    } else if store::first::<Value>(
+        &database,
+        "SELECT app_id FROM app_availability WHERE app_id=?1 AND status='removed'",
+        &[store::value(app_id)],
+    )
+    .await?
+    .is_none()
+    {
+        return error(
+            "APP_NOT_REMOVED",
+            "Only a removed App can appeal removal",
+            409,
+        );
+    }
+    let appeal_id = id("apl");
+    let timestamp = now();
+    database.batch(vec![
+        database.prepare(
+            "INSERT INTO appeals(appeal_id,app_id,submission_id,appealed_action,reason,state,
+               submitted_by_account_id,created_at) VALUES(?1,?2,?3,?4,?5,'submitted',?6,?7)",
+        ).bind(&[
+            store::value(&appeal_id), store::value(app_id), optional_value(input.submission_id.as_deref()),
+            store::value(&input.appealed_action), store::value(input.reason.trim()),
+            store::value(&actor.account_id), store::number(timestamp),
+        ])?,
+        store::audit_statement(
+            &database, Some(&actor.account_id), "appeal.submit", "appeal", &appeal_id,
+            json!({"developer_id":actor.developer_id,"bundle_id":bundle_id,"action":input.appealed_action}), timestamp,
+        )?,
+    ]).await?;
+    json_response(&json!({"appeal_id":appeal_id,"state":"submitted"}), 201)
+}
+
+async fn developer_unpublish(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_developer_actor(&req, &ctx.env).await? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let input: UnpublishInput = req.json().await?;
+    if input.reason.trim().is_empty() || input.reason.trim().chars().count() > 2000 {
+        return error("REASON_REQUIRED", "Unpublish reason is required", 422);
+    }
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    let Some(app) = store::first::<Value>(
+        &database,
+        "SELECT a.app_id,v.status FROM apps a JOIN app_availability v ON v.app_id=a.app_id
+          WHERE a.bundle_id=?1 AND a.developer_id=?2",
+        &[store::value(bundle_id), store::value(&actor.developer_id)],
+    )
+    .await?
+    else {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    };
+    if value_str(&app, "status") != Some("available") {
+        return error(
+            "APP_NOT_AVAILABLE",
+            "Only an available App can be unpublished",
+            409,
+        );
+    }
+    let app_id = value_str(&app, "app_id").unwrap_or("");
+    let timestamp = now();
+    let event_id = id("availability");
+    database.batch(vec![
+        database.prepare(
+            "UPDATE app_availability SET status='developer_unpublished',reason=?1,
+               changed_by_account_id=?2,changed_at=?3 WHERE app_id=?4 AND status='available'",
+        ).bind(&[
+            store::value(input.reason.trim()), store::value(&actor.account_id),
+            store::number(timestamp), store::value(app_id),
+        ])?,
+        database.prepare("UPDATE apps SET visibility='private',updated_at=?1 WHERE app_id=?2")
+            .bind(&[store::number(timestamp), store::value(app_id)])?,
+        database.prepare(
+            "INSERT INTO availability_history(event_id,app_id,from_status,to_status,reason,
+               actor_account_id,created_at) VALUES(?1,?2,'available','developer_unpublished',?3,?4,?5)",
+        ).bind(&[
+            store::value(&event_id), store::value(app_id), store::value(input.reason.trim()),
+            store::value(&actor.account_id), store::number(timestamp),
+        ])?,
+        store::audit_statement(
+            &database, Some(&actor.account_id), "app.developer_unpublish", "app", bundle_id,
+            json!({"developer_id":actor.developer_id,"reason":input.reason}), timestamp,
+        )?,
+    ]).await?;
+    json_response(
+        &json!({"status":"developer_unpublished","requires_re_review":true}),
         200,
     )
 }
@@ -2123,6 +2935,36 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/v1/developer/apps", developer_apps)
         .get_async("/v1/developer/apps/:bundle_id", developer_app)
         .patch_async("/v1/developer/apps/:bundle_id", developer_app)
+        .get_async(
+            "/v1/developer/apps/:bundle_id/submissions",
+            developer_submissions,
+        )
+        .post_async(
+            "/v1/developer/apps/:bundle_id/submissions",
+            developer_submissions,
+        )
+        .get_async(
+            "/v1/developer/apps/:bundle_id/submissions/:submission_id",
+            developer_submission,
+        )
+        .patch_async(
+            "/v1/developer/apps/:bundle_id/submissions/:submission_id",
+            developer_submission,
+        )
+        .post_async(
+            "/v1/developer/apps/:bundle_id/submissions/:submission_id/submit",
+            submit_developer_submission,
+        )
+        .post_async(
+            "/v1/developer/apps/:bundle_id/submissions/:submission_id/information",
+            answer_submission,
+        )
+        .get_async("/v1/developer/apps/:bundle_id/appeals", developer_appeals)
+        .post_async("/v1/developer/apps/:bundle_id/appeals", developer_appeals)
+        .post_async(
+            "/v1/developer/apps/:bundle_id/unpublish",
+            developer_unpublish,
+        )
         .post_async("/v1/developer/apps/:bundle_id/team", assign_team)
         .get_async(
             "/v1/developer/apps/:bundle_id/releases",

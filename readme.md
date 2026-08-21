@@ -6,24 +6,22 @@
 
 ストアフロントはメンテナンスモードです。`store.mochios.org`配下のすべての画面をメンテナンス案内へ内部的に書き換え、既存のカタログAPIを呼び出しません。検索エンジンにはインデックスしないよう応答します。
 
-既存のApp Store実装と`api.store.mochios.org`のAPIは削除していませんが、方針確定までストアフロントの機能追加は行いません。
+既存のカタログAPIは削除していません。Developer Consoleと審査APIの整備を先行し、利用者向けストアフロントの実装再開まではメンテナンス表示を維持します。
 
-## 実装済み
+## 現在実装している管理基盤
 
-- API駆動の「見つける」ストアフロント
-- 特集、ランキング、横スクロール棚、カテゴリ
-- アプリ／ゲーム一覧
-- 公開カタログ検索
-- 評価、スクリーンショットを含むアプリ詳細
-- GitHub Releases上の固定`.mpkg` assetを使うRelease一覧と直接ダウンロード
+- App、Build、Submission、Review、公開状態を分離したD1モデル
+- GitHub Releases上の固定`.mpkg` assetを使うBuild登録と直接ダウンロード
 - 審査待ちReleaseを排他的に取得する自動MPKG Reviewer Queue
+- DraftからRejectedまでのSubmissionワークフロー
+- Store Listing、Capability、通信先、Privacy、課金、Content、動的コード、AI、テスト情報の申告
+- 512×512 PNG／JPEGアイコンの実体検査と、3枚以上のスクリーンショット検査
+- Available／Developer Unpublished／Removedを審査状態から分離した公開管理
+- 回数制限のないAppeal、append-only Review／公開履歴
+- 1 Appにつき1つのcurrent Developer Certificateと、失効後の安全な置換
 - Developer／運営者向け通知、Account単位の未読管理
-- アプリ／Releaseごとのappend-only変更履歴
-- アプリアイコン画像の表示
-- デスクトップ／モバイル対応
-- Cloudflare Workers向けOpenNext設定
 
-画面上のアプリ情報はモックデータを使用しません。`APPSTORE_API_BASE_URL`で指定した公開カタログAPIの応答だけを表示します。
+利用者向けストアフロントは現在データを読み込まず、モックも表示しません。
 
 ## API設定
 
@@ -36,26 +34,27 @@ npm run api:migrate:local
 npm run api:dev
 ```
 
-別ターミナルでフロントエンドを起動します。
+別ターミナルでフロントエンドを起動すると、メンテナンス画面を確認できます。
 
 ```powershell
 $env:APPSTORE_API_BASE_URL='http://127.0.0.1:8787/v1'
 npm run dev
 ```
 
-APIが未設定、到達できない、または公開アプリが0件の場合は、画面確認用の`ExampleApplication`を1件だけ表示します。実データが1件でも存在すれば表示しません。
-
-期待するAPI:
+主な公開API:
 
 ```text
 GET /apps
 GET /apps/{bundle_id}
+GET /apps/{bundle_id}/status
+POST /apps/{bundle_id}/acquisitions
+GET /apps/{bundle_id}/download
 GET /search?q={query}
 GET /storefront
 ```
 
 アプリアイコンはAPIレスポンスの`icon`で指定します。フロントエンド側で絵文字や生成画像へ置き換えません。
-特集やストア棚も固定文言を置かず、`/storefront`の応答だけで構成します。詳しい応答形式は[docs/storefront-api.md](docs/storefront-api.md)を参照してください。
+利用者向けストアフロントを再開するまでは、これらのAPIを画面から呼び出しません。
 
 ## ローカル開発
 

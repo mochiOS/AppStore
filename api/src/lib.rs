@@ -2276,6 +2276,419 @@ async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<R
     )
 }
 
+async fn admin_submissions(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let queue = req
+        .url()?
+        .query_pairs()
+        .find(|(key, _)| key == "queue")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_else(|| "review".into());
+    let condition = match queue.as_str() {
+        "review" => "s.state IN ('submitted','in_review')",
+        "new" => "s.submission_kind='new_app' AND s.state IN ('submitted','in_review')",
+        "updates" => "s.submission_kind='update' AND s.state IN ('submitted','in_review')",
+        "more_information" => "s.state='more_information_required'",
+        "completed" => "s.state IN ('approved','changes_required','rejected')",
+        "all" => "1=1",
+        _ => return error("QUEUE_INVALID", "Review queue is invalid", 422),
+    };
+    let (limit, offset) = page(&req);
+    let submissions: Vec<Value> = store::rows(
+        &db(&ctx)?,
+        &format!(
+            "SELECT s.submission_id,s.app_id,s.build_id,s.version,s.submission_number,
+                    s.submission_kind,s.state,s.submitted_at,s.created_at,d.app_name,
+                    d.developer_name,a.bundle_id,a.developer_id,b.machine_status
+               FROM submissions s JOIN submission_details d USING(submission_id)
+               JOIN apps a ON a.app_id=s.app_id JOIN app_builds b ON b.build_id=s.build_id
+              WHERE {condition}
+              ORDER BY COALESCE(s.submitted_at,s.created_at),s.submission_id LIMIT ?1 OFFSET ?2"
+        ),
+        &[store::number(limit), store::number(offset)],
+    )
+    .await?;
+    json_response(
+        &json!({"admin":actor,"queue":queue,"submissions":submissions}),
+        200,
+    )
+}
+
+async fn admin_submission(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let submission_id = param(&ctx, "submission_id");
+    let Some(submission) = submission_payload(&db(&ctx)?, submission_id).await? else {
+        return error("SUBMISSION_NOT_FOUND", "Submission not found", 404);
+    };
+    json_response(&json!({"admin":actor,"submission":submission}), 200)
+}
+
+async fn start_submission_review(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let submission_id = param(&ctx, "submission_id");
+    let database = db(&ctx)?;
+    let updated: Option<Value> = store::first(
+        &database,
+        "UPDATE submissions SET state='in_review',updated_at=?1
+          WHERE submission_id=?2 AND state='submitted' RETURNING submission_id",
+        &[store::number(now()), store::value(submission_id)],
+    )
+    .await?;
+    if updated.is_none() {
+        return error(
+            "SUBMISSION_NOT_REVIEWABLE",
+            "Only a submitted Submission can enter review",
+            409,
+        );
+    }
+    store::audit(
+        &database,
+        Some(&actor),
+        "submission.review_started",
+        "submission",
+        submission_id,
+        json!({}),
+        now(),
+    )
+    .await?;
+    json_response(
+        &json!({"submission":submission_payload(&database, submission_id).await?}),
+        200,
+    )
+}
+
+async fn decide_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let input: ReviewDecisionInput = req.json().await?;
+    if !matches!(
+        input.decision.as_str(),
+        "approved" | "changes_required" | "more_information_required" | "rejected"
+    ) || input.reason.trim().is_empty()
+        || input.reason.trim().chars().count() > 8000
+    {
+        return error("REVIEW_DECISION_INVALID", "Review decision is invalid", 422);
+    }
+    let submission_id = param(&ctx, "submission_id");
+    let database = db(&ctx)?;
+    let Some(submission) = store::first::<Value>(
+        &database,
+        "SELECT s.*,a.bundle_id,a.developer_id,b.machine_status,b.certificate_id,
+                d.app_name,d.description,d.icon_url,d.category,d.kind,d.age_rating
+           FROM submissions s JOIN apps a ON a.app_id=s.app_id
+           JOIN app_builds b ON b.build_id=s.build_id
+           JOIN submission_details d USING(submission_id)
+          WHERE s.submission_id=?1",
+        &[store::value(submission_id)],
+    )
+    .await?
+    else {
+        return error("SUBMISSION_NOT_FOUND", "Submission not found", 404);
+    };
+    if value_str(&submission, "state") != Some("in_review") {
+        return error(
+            "SUBMISSION_NOT_REVIEWABLE",
+            "Only an In Review Submission can receive a decision",
+            409,
+        );
+    }
+    let timestamp = now();
+    let review_id = id("review");
+    let mut statements = vec![
+        database
+            .prepare(
+                "INSERT INTO submission_reviews(review_id,submission_id,reviewer_account_id,
+                   decision,reason,created_at) VALUES(?1,?2,?3,?4,?5,?6)",
+            )
+            .bind(&[
+                store::value(&review_id),
+                store::value(submission_id),
+                store::value(&actor),
+                store::value(&input.decision),
+                store::value(input.reason.trim()),
+                store::number(timestamp),
+            ])?,
+        database
+            .prepare(
+                "UPDATE submissions SET state=?1,
+                   resolved_at=CASE WHEN ?1 IN ('approved','changes_required','rejected') THEN ?2 ELSE NULL END,
+                   updated_at=?2
+                  WHERE submission_id=?3 AND state='in_review'",
+            )
+            .bind(&[
+                store::value(&input.decision),
+                store::number(timestamp),
+                store::value(submission_id),
+            ])?,
+    ];
+    if input.decision == "approved" {
+        if value_str(&submission, "machine_status") != Some("valid") {
+            return error("BUILD_NOT_VALIDATED", "Build is not valid", 409);
+        }
+        let developer_id = value_str(&submission, "developer_id").unwrap_or("");
+        let certificate_id = value_str(&submission, "certificate_id").unwrap_or("");
+        if auth::certificate_identity(&ctx.env, certificate_id, developer_id)
+            .await?
+            .is_none()
+        {
+            return error(
+                "CERTIFICATE_INVALID",
+                "The App Developer Certificate is not active",
+                409,
+            );
+        }
+        let app_id = value_str(&submission, "app_id").unwrap_or("");
+        let version = value_str(&submission, "version").unwrap_or("");
+        let kind = value_str(&submission, "submission_kind").unwrap_or("");
+        if kind != "re_review"
+            && store::first::<Value>(
+                &database,
+                "SELECT version FROM published_versions WHERE app_id=?1 AND version=?2",
+                &[store::value(app_id), store::value(version)],
+            )
+            .await?
+            .is_some()
+        {
+            return error(
+                "VERSION_ALREADY_PUBLISHED",
+                "This version has already been published",
+                409,
+            );
+        }
+        if kind == "re_review" {
+            statements.push(
+                database
+                    .prepare(
+                        "INSERT OR IGNORE INTO published_versions(app_id,version,submission_id,published_at)
+                         VALUES(?1,?2,?3,?4)",
+                    )
+                    .bind(&[
+                        store::value(app_id),
+                        store::value(version),
+                        store::value(submission_id),
+                        store::number(timestamp),
+                    ])?,
+            );
+        } else {
+            statements.push(
+                database
+                    .prepare(
+                        "INSERT INTO published_versions(app_id,version,submission_id,published_at)
+                         VALUES(?1,?2,?3,?4)",
+                    )
+                    .bind(&[
+                        store::value(app_id),
+                        store::value(version),
+                        store::value(submission_id),
+                        store::number(timestamp),
+                    ])?,
+            );
+        }
+        let previous_status: Option<Value> = store::first(
+            &database,
+            "SELECT status FROM app_availability WHERE app_id=?1",
+            &[store::value(app_id)],
+        )
+        .await?;
+        let from_status = previous_status
+            .as_ref()
+            .and_then(|value| value_str(value, "status"));
+        statements.extend([
+            database.prepare(
+                "INSERT INTO app_availability(app_id,status,current_submission_id,reason,
+                   changed_by_account_id,changed_at) VALUES(?1,'available',?2,NULL,?3,?4)
+                 ON CONFLICT(app_id) DO UPDATE SET status='available',current_submission_id=excluded.current_submission_id,
+                   reason=NULL,changed_by_account_id=excluded.changed_by_account_id,changed_at=excluded.changed_at",
+            ).bind(&[
+                store::value(app_id),store::value(submission_id),store::value(&actor),store::number(timestamp),
+            ])?,
+            database.prepare(
+                "UPDATE apps SET display_name=?1,description=?2,icon_url=?3,category=?4,kind=?5,
+                   age_rating=?6,latest_version=?7,visibility='public',updated_at=?8 WHERE app_id=?9",
+            ).bind(&[
+                store::value(value_str(&submission,"app_name").unwrap_or("")),
+                store::value(value_str(&submission,"description").unwrap_or("")),
+                store::value(value_str(&submission,"icon_url").unwrap_or("")),
+                optional_value(value_str(&submission,"category")),
+                store::value(value_str(&submission,"kind").unwrap_or("app")),
+                optional_value(value_str(&submission,"age_rating")),store::value(version),
+                store::number(timestamp),store::value(app_id),
+            ])?,
+            database.prepare("DELETE FROM app_screenshots WHERE bundle_id=?1")
+                .bind(&[store::value(value_str(&submission,"bundle_id").unwrap_or(""))])?,
+            database.prepare(
+                "INSERT INTO app_screenshots(bundle_id,position,image_url)
+                 SELECT ?1,position,image_url FROM submission_screenshots WHERE submission_id=?2",
+            ).bind(&[
+                store::value(value_str(&submission,"bundle_id").unwrap_or("")),store::value(submission_id),
+            ])?,
+            database.prepare(
+                "INSERT INTO availability_history(event_id,app_id,from_status,to_status,reason,
+                   actor_account_id,created_at) VALUES(?1,?2,?3,'available',?4,?5,?6)",
+            ).bind(&[
+                store::value(id("availability")),store::value(app_id),optional_value(from_status),
+                store::value(input.reason.trim()),store::value(&actor),store::number(timestamp),
+            ])?,
+        ]);
+    }
+    statements.push(store::audit_statement(
+        &database,
+        Some(&actor),
+        "submission.decision",
+        "submission",
+        submission_id,
+        json!({"decision":input.decision,"reason":input.reason,"bundle_id":value_str(&submission,"bundle_id")}),
+        timestamp,
+    )?);
+    database.batch(statements).await?;
+    json_response(
+        &json!({"review_id":review_id,"submission":submission_payload(&database, submission_id).await?}),
+        200,
+    )
+}
+
+async fn admin_remove_app(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let input: RemovalInput = req.json().await?;
+    if input.confirmation != "REMOVE"
+        || input.reason.trim().is_empty()
+        || input.reason.trim().chars().count() > 8000
+    {
+        return error(
+            "REMOVAL_CONFIRMATION_REQUIRED",
+            "Removal reason and REMOVE confirmation are required",
+            422,
+        );
+    }
+    let bundle_id = param(&ctx, "bundle_id");
+    let database = db(&ctx)?;
+    let Some(app) = store::first::<Value>(
+        &database,
+        "SELECT a.app_id,v.status FROM apps a JOIN app_availability v ON v.app_id=a.app_id
+          WHERE a.bundle_id=?1",
+        &[store::value(bundle_id)],
+    )
+    .await?
+    else {
+        return error("APP_NOT_FOUND", "App not found", 404);
+    };
+    if value_str(&app, "status") != Some("available") {
+        return error(
+            "APP_NOT_AVAILABLE",
+            "Only an available App can be removed",
+            409,
+        );
+    }
+    let app_id = value_str(&app, "app_id").unwrap_or("");
+    let timestamp = now();
+    database.batch(vec![
+        database.prepare(
+            "UPDATE app_availability SET status='removed',reason=?1,changed_by_account_id=?2,
+               changed_at=?3 WHERE app_id=?4 AND status='available'",
+        ).bind(&[
+            store::value(input.reason.trim()),store::value(&actor),store::number(timestamp),store::value(app_id),
+        ])?,
+        database.prepare("UPDATE apps SET visibility='private',updated_at=?1 WHERE app_id=?2")
+            .bind(&[store::number(timestamp),store::value(app_id)])?,
+        database.prepare(
+            "INSERT INTO availability_history(event_id,app_id,from_status,to_status,reason,
+               actor_account_id,created_at) VALUES(?1,?2,'available','removed',?3,?4,?5)",
+        ).bind(&[
+            store::value(id("availability")),store::value(app_id),store::value(input.reason.trim()),
+            store::value(&actor),store::number(timestamp),
+        ])?,
+        store::audit_statement(
+            &database,Some(&actor),"app.removed","app",bundle_id,
+            json!({"reason":input.reason}),timestamp,
+        )?,
+    ]).await?;
+    json_response(&json!({"status":"removed","reason":input.reason}), 200)
+}
+
+async fn admin_appeals(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let actor = match require_admin(&req, &ctx.env)? {
+        Ok(actor) => actor,
+        Err(response) => return Ok(response),
+    };
+    let database = db(&ctx)?;
+    if req.method() == Method::Get {
+        let state = req
+            .url()?
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_else(|| "submitted".into());
+        if !matches!(
+            state.as_str(),
+            "submitted" | "in_review" | "resolved" | "all"
+        ) {
+            return error("APPEAL_STATE_INVALID", "Appeal state is invalid", 422);
+        }
+        let appeals: Vec<Value> = if state == "all" {
+            store::rows(&database,"SELECT p.*,a.bundle_id,a.display_name FROM appeals p JOIN apps a ON a.app_id=p.app_id ORDER BY p.created_at",&[]).await?
+        } else {
+            store::rows(&database,"SELECT p.*,a.bundle_id,a.display_name FROM appeals p JOIN apps a ON a.app_id=p.app_id WHERE p.state=?1 ORDER BY p.created_at",&[store::value(&state)]).await?
+        };
+        return json_response(&json!({"admin":actor,"appeals":appeals}), 200);
+    }
+    let appeal_id = param(&ctx, "appeal_id");
+    let input: AppealResolutionInput = req.json().await?;
+    if !matches!(input.outcome.as_str(), "accepted" | "dismissed")
+        || input.reason.trim().is_empty()
+        || input.reason.trim().chars().count() > 8000
+    {
+        return error(
+            "APPEAL_RESOLUTION_INVALID",
+            "Appeal resolution is invalid",
+            422,
+        );
+    }
+    let timestamp = now();
+    let updated: Option<Value> = store::first(
+        &database,
+        "UPDATE appeals SET state='resolved',resolution=?1,resolved_by_account_id=?2,resolved_at=?3
+          WHERE appeal_id=?4 AND state IN ('submitted','in_review') RETURNING appeal_id",
+        &[
+            store::value(format!("{}: {}", input.outcome, input.reason.trim())),
+            store::value(&actor),
+            store::number(timestamp),
+            store::value(appeal_id),
+        ],
+    )
+    .await?;
+    if updated.is_none() {
+        return error("APPEAL_NOT_RESOLVABLE", "Appeal cannot be resolved", 409);
+    }
+    store::audit(
+        &database,
+        Some(&actor),
+        "appeal.resolve",
+        "appeal",
+        appeal_id,
+        json!({"outcome":input.outcome,"reason":input.reason}),
+        timestamp,
+    )
+    .await?;
+    json_response(
+        &json!({"appeal_id":appeal_id,"state":"resolved","outcome":input.outcome}),
+        200,
+    )
+}
+
 async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let actor = match require_admin(&req, &ctx.env)? {
         Ok(v) => v,
@@ -3057,6 +3470,19 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             read_developer_notification,
         )
         .get_async("/v1/admin/releases", admin_releases)
+        .get_async("/v1/admin/submissions", admin_submissions)
+        .get_async("/v1/admin/submissions/:submission_id", admin_submission)
+        .post_async(
+            "/v1/admin/submissions/:submission_id/start",
+            start_submission_review,
+        )
+        .post_async(
+            "/v1/admin/submissions/:submission_id/decision",
+            decide_submission,
+        )
+        .get_async("/v1/admin/appeals", admin_appeals)
+        .post_async("/v1/admin/appeals/:appeal_id/resolve", admin_appeals)
+        .post_async("/v1/admin/apps/:bundle_id/remove", admin_remove_app)
         .get_async("/v1/admin/notifications", admin_notifications)
         .post_async(
             "/v1/admin/notifications/read-all",

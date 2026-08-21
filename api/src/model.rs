@@ -308,6 +308,27 @@ pub struct UnpublishInput {
     pub reason: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewDecisionInput {
+    pub decision: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemovalInput {
+    pub reason: String,
+    pub confirmation: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppealResolutionInput {
+    pub outcome: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PublicApp {
     pub bundle_id: String,

@@ -4393,4 +4393,11 @@ mod tests {
             store.contains("'submission.submit','submission.information_provided','appeal.submit'")
         );
     }
+
+    #[test]
+    fn public_release_union_orders_the_wrapped_result() {
+        let store = include_str!("store.rs");
+        assert!(store.contains("SELECT * FROM (\n         SELECT b.build_id AS release_id"));
+        assert!(store.contains(") ORDER BY created_at DESC"));
+    }
 }

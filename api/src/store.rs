@@ -102,11 +102,12 @@ pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<Publi
 pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
     rows(
         db,
-        "SELECT b.build_id AS release_id,a.bundle_id,b.version,b.file_size AS size,b.sha256,
+        "SELECT * FROM (
+         SELECT b.build_id AS release_id,a.bundle_id,b.version,b.file_size AS size,b.sha256,
                 b.package_digest,NULL AS changelog,'approved' AS review_status,
                 'published' AS publish_status,b.download_url,b.github_repository,
                 b.github_release_tag,b.github_asset_id,b.asset_name,
-                b.certificate_id AS developer_certificate_id,b.created_at
+                b.certificate_id AS developer_certificate_id,b.created_at AS created_at
            FROM published_versions pv JOIN apps a ON a.app_id=pv.app_id
            JOIN submissions s ON s.submission_id=pv.submission_id
            JOIN app_builds b ON b.build_id=s.build_id
@@ -121,7 +122,7 @@ pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<Rel
           WHERE r.bundle_id=?1 AND b.status='active' AND validation_status='valid'
             AND review_status='approved' AND publish_status='published'
             AND download_url IS NOT NULL AND sha256 IS NOT NULL AND signature IS NOT NULL
-          ORDER BY created_at DESC",
+         ) ORDER BY created_at DESC",
         &[value(bundle_id)],
     )
     .await

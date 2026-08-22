@@ -47,6 +47,16 @@ export function StoreShell({ children }: { children: ReactNode }) {
         </aside>
         <main className="main">{children}</main>
       </div>
+      <footer className="site-footer">
+        <div className="site-footer__inner">
+          <span>Copyright © 2026 mochiOS team</span>
+          <nav aria-label="フッター">
+            <a href="https://policy.mochios.org/terms/">利用規約</a>
+            <a href="https://policy.mochios.org/privacy/">プライバシー</a>
+            <a href="https://status.mochios.org/">サービス状態</a>
+          </nav>
+        </div>
+      </footer>
     </div>
   );
 }

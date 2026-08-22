@@ -26,12 +26,6 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .material-icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 24px; height: 24px; overflow: visible; font-family: "Material Symbols Outlined"; font-size: 20px; font-style: normal; font-weight: 400; font-feature-settings: "liga"; font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24; letter-spacing: normal; line-height: 1; text-transform: none; white-space: nowrap; word-wrap: normal; }
 .app-shell { min-height: 100vh; }
 
-.maintenance-page { display: grid; min-height: 100vh; place-items: center; padding: 48px 24px; }
-.maintenance-card { width: min(100%, 620px); text-align: center; }
-.maintenance-brand { margin: 0 0 30px; color: var(--secondary); font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
-.maintenance-card h1 { margin: 0; font-size: clamp(30px, 6vw, 46px); letter-spacing: -.045em; line-height: 1.15; }
-.maintenance-message { margin: 20px auto 0; color: var(--secondary); font-size: 14px; line-height: 1.9; }
-
 .site-header { position: sticky; top: 0; z-index: 20; border-bottom: 1px solid rgba(0,0,0,.055); background: rgba(247,247,247,.88); backdrop-filter: blur(22px) saturate(140%); }
 .site-header__inner { display: flex; align-items: center; justify-content: space-between; width: min(calc(100% - 40px), var(--content)); height: 68px; margin: auto; }
 .brand { display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 650; }
@@ -41,7 +35,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .header-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 13px; }
 .header-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(10,132,255,.12); }
 
-.workspace { display: grid; grid-template-columns: 220px minmax(0,1fr); gap: 56px; width: min(calc(100% - 40px), var(--content)); margin: auto; padding: 48px 0 80px; }
+.workspace { display: grid; grid-template-columns: 244px minmax(0,1fr); gap: 44px; width: min(calc(100% - 40px), var(--content)); margin: auto; padding: 48px 0 80px; }
 .sidebar { position: sticky; top: 100px; align-self: start; }
 .sidebar nav { display: grid; gap: 4px; }
 .sidebar a { display: flex; align-items: center; gap: 11px; min-height: 43px; padding: 0 13px; border-radius: 12px; color: var(--secondary); font-size: 14px; }
@@ -117,6 +111,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .app-icon--large { width: 112px; height: 112px; border-radius: 25px; }
 .empty { padding: 46px 25px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); text-align: center; }
 .empty p { margin: 0; color: var(--secondary); font-size: 13px; }
+.search-hint { padding: 22px 2px; color: var(--secondary); font-size: 13px; }
 
 .search-form { display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 9px 0 14px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); }
 .search-form > .material-icon { color: var(--tertiary); }
@@ -151,10 +146,22 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .release__copy p { margin: 10px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
 .download-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 0 14px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 620; }
 .download-button .material-icon { width: 17px; height: 17px; font-size: 17px; }
+.distribution-details { overflow: hidden; margin: 0; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); }
+.distribution-details > div { display: grid; grid-template-columns: 150px minmax(0,1fr); gap: 20px; padding: 15px 18px; border-bottom: 1px solid var(--border); }
+.distribution-details > div:last-child { border-bottom: 0; }
+.distribution-details dt { color: var(--secondary); font-size: 12px; }
+.distribution-details dd { min-width: 0; margin: 0; font-size: 12px; }
+.distribution-details a { color: var(--accent); font-weight: 620; }
+.distribution-details code { display: block; overflow-wrap: anywhere; font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; line-height: 1.55; }
 .not-found { padding: 70px 0; text-align: center; }
 .not-found h1 { margin: 0; font-size: 24px; }
 .not-found p { margin: 12px 0 24px; color: var(--secondary); font-size: 13px; }
 .not-found a { color: var(--accent); font-size: 13px; font-weight: 620; }
+.retry-button { min-height: 38px; padding: 0 16px; border-radius: 9px; background: var(--accent); color: #fff; cursor: pointer; font-size: 12px; font-weight: 620; }
+.site-footer { border-top: 1px solid var(--border); color: var(--tertiary); font-size: 10px; }
+.site-footer__inner { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: min(calc(100% - 40px),var(--content)); min-height: 76px; margin: auto; }
+.site-footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
+.site-footer a:hover { color: var(--text); }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 @media (max-width: 760px) {
@@ -162,8 +169,8 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   .header-search { width: 150px; }
   .workspace { grid-template-columns: 1fr; gap: 28px; padding-top: 24px; }
   .sidebar { position: static; }
-  .sidebar nav { grid-template-columns: repeat(2,1fr); }
-  .sidebar a { justify-content: center; }
+  .sidebar nav { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 3px; }
+  .sidebar a { flex: 0 0 auto; justify-content: center; }
   .page-heading { margin-bottom: 26px; }
   .feature-grid, .chart-grid, .tile-grid, .category-grid { grid-template-columns: 1fr; }
   .feature-card { min-height: 330px; }
@@ -184,4 +191,6 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   .app-facts > div { min-width: 112px; padding-right: 14px; padding-left: 14px; }
   .release { align-items: flex-start; flex-direction: column; }
   .download-button { width: 100%; }
+  .distribution-details > div { grid-template-columns: 1fr; gap: 7px; }
+  .site-footer__inner { align-items: flex-start; flex-direction: column; justify-content: center; width: min(calc(100% - 28px),var(--content)); padding: 20px 0; }
 }

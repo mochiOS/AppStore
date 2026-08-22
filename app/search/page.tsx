@@ -22,7 +22,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
           <div className="section-title"><h2>検索結果</h2><span>{apps.length}件</span></div>
           <AppList apps={apps} />
         </section>
-      ) : null}
+      ) : <div className="search-hint"><p>アプリ名、Developer名、Bundle IDから検索できます。</p></div>}
     </>
   );
 }

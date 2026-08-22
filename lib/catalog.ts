@@ -16,12 +16,17 @@ export type CatalogApp = {
 };
 
 export type CatalogRelease = {
+  release_id: string;
   version: string;
   size: number;
   sha256: string;
-  changelog: string;
+  package_digest: string;
+  changelog?: string | null;
   download_url: string;
-  created_at: string;
+  github_repository: string;
+  github_release_tag: string;
+  asset_name: string;
+  created_at: number;
 };
 
 export type CatalogAppDetail = CatalogApp & { releases: CatalogRelease[] };
@@ -60,27 +65,19 @@ type SearchResponse = { query: string; results: CatalogApp[] };
 
 const apiBaseUrl = process.env.APPSTORE_API_BASE_URL?.replace(/\/$/, "");
 
-const exampleApp: CatalogApp = {
-  bundle_id: "org.mochios.example-application",
-  name: "ExampleApplication",
-  version: "1.0.0",
-  developer: "mochiOS",
-  description: "Example application.",
-  icon: null,
-  kind: "app",
-};
-
-async function request<T>(path: string): Promise<T | null> {
-  if (!apiBaseUrl) return null;
+async function request<T>(path: string, allowNotFound = false): Promise<T | null> {
+  if (!apiBaseUrl) throw new Error("APPSTORE_API_BASE_URL is not configured");
   try {
     const response = await fetch(`${apiBaseUrl}${path}`, {
       headers: { Accept: "application/json" },
       next: { revalidate: 60 },
     });
-    if (!response.ok) return null;
+    if (allowNotFound && response.status === 404) return null;
+    if (!response.ok) throw new Error(`App Store API returned ${response.status}`);
     return (await response.json()) as T;
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof Error) throw error;
+    throw new Error("App Store API request failed");
   }
 }
 
@@ -94,7 +91,6 @@ export async function listApps(filters?: { kind?: "app" | "game"; category?: str
   if (filters?.kind === "game") apps = apps.filter((app) => app.kind === "game");
   if (filters?.kind === "app") apps = apps.filter((app) => app.kind !== "game");
   if (filters?.category) apps = apps.filter((app) => !app.category || app.category === filters.category);
-  if (apps.length === 0 && filters?.kind !== "game" && !filters?.category) return [exampleApp];
   return apps;
 }
 
@@ -105,12 +101,7 @@ export async function getStorefront(): Promise<Storefront> {
     storefront.sections.some((section) => section.apps.length > 0)
   );
   if (hasStorefrontApps) return storefront;
-  if (storefront?.categories.length) {
-    return {
-      ...storefront,
-      sections: [{ id: "apps", title: "アプリ", layout: "row", apps: [exampleApp] }],
-    };
-  }
+  if (storefront?.categories.length) return storefront;
   const apps = await listApps();
   const catalogApps = apps.filter((app) => app.kind !== "game");
   const games = apps.filter((app) => app.kind === "game");
@@ -132,17 +123,15 @@ export async function getStorefront(): Promise<Storefront> {
 }
 
 export async function findApp(bundleId: string): Promise<CatalogAppDetail | null> {
-  const app = await request<CatalogAppDetail>(`/apps/${encodeURIComponent(bundleId)}`);
+  const app = await request<CatalogAppDetail>(`/apps/${encodeURIComponent(bundleId)}`, true);
   if (app) return { ...app, releases: app.releases ?? [], screenshots: app.screenshots ?? [] };
-  return bundleId === exampleApp.bundle_id ? { ...exampleApp, releases: [], screenshots: [] } : null;
+  return null;
 }
 
 export async function searchApps(query: string): Promise<CatalogApp[]> {
   if (!query.trim()) return [];
   const result = await request<SearchResponse>(`/search?q=${encodeURIComponent(query.trim())}`);
-  const apps = result?.results ?? [];
-  if (apps.length === 0 && exampleApp.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) return [exampleApp];
-  return apps;
+  return result?.results ?? [];
 }
 
 export function resolveAssetUrl(path: string | null | undefined): string | null {
@@ -163,4 +152,9 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${Math.round(bytes / 1024 / 1024)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+export function formatPublishedAt(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "—";
+  return new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium" }).format(new Date(timestamp * 1000));
 }

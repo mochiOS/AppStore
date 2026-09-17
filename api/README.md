@@ -38,6 +38,8 @@ Developer CAのstatusが有効で内部Developer IDと一致するときだけ�
 
 1 Appには、新規Buildの登録に使用するCertificateを1つ選択します。`PATCH /v1/developer/apps/{bundle_id}/certificate`へ新しいCertificate IDと`"confirmation":"ROTATE"`を送ると、Developer CAでactiveであり、新旧とも同じDeveloperに属することを確認して計画的に切り替えます。旧Certificateの失効は要求しません。revoked／suspended／expiredなCertificateは選択できません。ローテーションはaudit logへ記録し、過去BuildのCertificate ID・固定identity・公開状態は変更しません。
 
+移行中も旧Workerを停止させないため、legacyの`is_current`列は互換用に保持し、migration triggerで新しい選択列へ同期します。新APIは両方を同時更新します。
+
 DeveloperがBuild登録requestへ`architecture`や`abi`を指定することはできません。MPKG Reviewerが署名済みmanifestの`package.architecture`と`package.abi`を検証し、validation attemptに拘束したreportとして送信した値だけをBuild metadataへ保存します。
 
 公開Release APIはこれらを返し、`GET /v1/apps/{bundle_id}/releases?architecture=x86_64&abi=mochios-1`およびdownload APIで完全一致filterを指定できます。AppStoreはOS marketing versionを比較せず、最終的なABI compatibility判断はmochiOSが行います。

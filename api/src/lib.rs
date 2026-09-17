@@ -1914,7 +1914,7 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
         .batch(vec![
             database
                 .prepare(
-                    "UPDATE app_certificates SET selected_for_new_builds=0,retired_at=?1,
+                    "UPDATE app_certificates SET selected_for_new_builds=0,is_current=0,retired_at=?1,
                        last_verified_at=?1 WHERE app_id=?2 AND certificate_id=?3
                          AND selected_for_new_builds=1",
                 )
@@ -1926,12 +1926,14 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
             database
                 .prepare(
                     "INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,
-                       assigned_at,last_verified_at,observed_status,selected_for_new_builds,retired_at)
-                     VALUES(?1,?2,?3,?4,?4,'active',1,NULL)
+                       assigned_at,last_verified_at,observed_status,is_current,
+                       selected_for_new_builds,retired_at)
+                     VALUES(?1,?2,?3,?4,?4,'active',1,1,NULL)
                      ON CONFLICT(app_id,certificate_id) DO UPDATE SET
                        assigned_by_account_id=excluded.assigned_by_account_id,
                        last_verified_at=excluded.last_verified_at,
-                       observed_status='active',selected_for_new_builds=1,retired_at=NULL",
+                       observed_status='active',is_current=1,
+                       selected_for_new_builds=1,retired_at=NULL",
                 )
                 .bind(&[
                     store::value(app_id),
@@ -2181,8 +2183,9 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             database
                 .prepare(
                     "INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,
-                       assigned_at,last_verified_at,observed_status)
-                     VALUES(?1,?2,?3,?4,?4,'active')",
+                       assigned_at,last_verified_at,observed_status,is_current,
+                       selected_for_new_builds)
+                     VALUES(?1,?2,?3,?4,?4,'active',1,1)",
                 )
                 .bind(&[
                     store::value(&app_id),

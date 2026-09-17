@@ -1,10 +1,29 @@
 DROP INDEX idx_app_current_certificate;
 
-ALTER TABLE app_certificates RENAME COLUMN is_current TO selected_for_new_builds;
+ALTER TABLE app_certificates ADD COLUMN selected_for_new_builds INTEGER NOT NULL DEFAULT 0
+  CHECK (selected_for_new_builds IN (0, 1));
 ALTER TABLE app_certificates ADD COLUMN retired_at INTEGER;
+
+UPDATE app_certificates SET selected_for_new_builds=is_current;
 
 CREATE UNIQUE INDEX idx_app_selected_certificate
   ON app_certificates(app_id) WHERE selected_for_new_builds=1;
+
+CREATE TRIGGER app_certificate_legacy_selection_insert
+AFTER INSERT ON app_certificates
+WHEN NEW.selected_for_new_builds IS NOT NEW.is_current
+BEGIN
+  UPDATE app_certificates SET selected_for_new_builds=NEW.is_current
+   WHERE app_id=NEW.app_id AND certificate_id=NEW.certificate_id;
+END;
+
+CREATE TRIGGER app_certificate_legacy_selection_update
+AFTER UPDATE OF is_current ON app_certificates
+WHEN NEW.selected_for_new_builds IS NOT NEW.is_current
+BEGIN
+  UPDATE app_certificates SET selected_for_new_builds=NEW.is_current
+   WHERE app_id=NEW.app_id AND certificate_id=NEW.certificate_id;
+END;
 
 ALTER TABLE releases ADD COLUMN architecture TEXT;
 ALTER TABLE releases ADD COLUMN abi TEXT;

@@ -72,6 +72,8 @@ Package IDは`org.mochios.*`へ限定せず、共有`mochios-certificate` valida
 
 Reviewer専用tokenはConsoleの`ADMIN_TOKEN`と分離します。検証reportはRelease ID、GitHub Asset ID、Asset SHA-256、Package digest、Reviewer version、検証時刻へ拘束され、別Releaseへ再利用できません。失敗時も固定error codeと短いsummaryだけを保存し、MPKG本体やraw payloadは保存しません。
 
+Reviewerは署名検証済み`manifest.toml`の`package.architecture`と`package.abi`を必須検証し、同じvalidation reportへ含めます。Developer API requestのarchitecture／ABIは参照しません。
+
 GitHub assetの取得は固定tagの`.mpkg` URLだけを許可し、許可済みGitHub配信hostへのHTTPS redirectだけを追跡します。128 MiBを上限に最大3回（初回 + retry 2回）取得し、各試行の一時ファイルは成功・失敗を問わずプロセス終了時までに削除されます。DeveloperCAをローカルで差し替える場合は`--developer-ca http://127.0.0.1:<port>`を指定できます。
 
 ## 検証

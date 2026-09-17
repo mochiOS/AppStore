@@ -32,7 +32,7 @@ payload/root/...
 
 ## Manifest
 
-Manifestは`format = 1`、`[package]`、`[[file]]`、`[[binary]]`で構成します。各`[[file]]`はpayload fileのID、path、size、SHA-256、modeを宣言し、各`[[binary]]`は対象file IDと`requires` Capabilityを宣言します。未宣言payload、存在しないfile ID、hash／size不一致は拒否します。
+Manifestは`format = 1`、`[package]`、`[[file]]`、`[[binary]]`で構成します。`package.architecture`と`package.abi`は必須で、例は`x86_64`と`mochios-1`です。各`[[file]]`はpayload fileのID、path、size、SHA-256、modeを宣言し、各`[[binary]]`は対象file IDと`requires` Capabilityを宣言します。未宣言payload、存在しないfile ID、hash／size不一致は拒否します。
 
 署名メッセージは次のとおりです。
 
@@ -41,5 +41,7 @@ Manifestは`format = 1`、`[package]`、`[[file]]`、`[[binary]]`で構成しま
 ```
 
 ReviewerはMCER v1を組み込みRoot公開鍵で検証し、Package ID scopeと全`binary.requires`が証明書の許可範囲内であることを確認します。さらに登録時のCertificate serialとsubject公開鍵が、MPKG内の証明書と一致することを確認します。
+
+Reviewerは署名検証した同じmanifestから`architecture`と`abi`を抽出し、Release ID、Asset ID、SHA-256、Package digest、validation attemptと同じreportへ含めます。DeveloperのBuild登録requestに含まれる互換性情報は使用しません。AppStoreはこの検証済み値をBuildへ保存し、最終的なABI適合判断はmochiOSがインストール時に行います。
 
 AppStoreはMPKG本体を保存せず、固定GitHub Release asset URL、外側のSHA-256、Certificate情報、審査状態だけを保持します。`releases/latest/download/...`は使いません。

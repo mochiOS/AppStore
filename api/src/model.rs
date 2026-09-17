@@ -116,6 +116,8 @@ pub struct ValidationInput {
     pub certificate_subject_key_id: String,
     pub certificate_developer_id: String,
     pub certificate_issuer_key_id: String,
+    pub architecture: String,
+    pub abi: String,
     pub capabilities: Vec<String>,
     pub payloads: Vec<PayloadReport>,
 }
@@ -362,6 +364,8 @@ pub struct ReleaseView {
     pub size: i64,
     pub sha256: String,
     pub package_digest: String,
+    pub architecture: Option<String>,
+    pub abi: Option<String>,
     pub changelog: Option<String>,
     pub review_status: String,
     pub publish_status: String,

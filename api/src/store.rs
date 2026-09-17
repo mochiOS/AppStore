@@ -99,49 +99,72 @@ pub async fn public_app(db: &D1Database, bundle_id: &str) -> Result<Option<Publi
     .await
 }
 
-pub async fn public_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
+pub async fn public_releases(
+    db: &D1Database,
+    bundle_id: &str,
+    architecture: Option<&str>,
+    abi: Option<&str>,
+) -> Result<Vec<ReleaseView>> {
     rows(
         db,
         "SELECT * FROM (
          SELECT b.build_id AS release_id,a.bundle_id,b.version,b.file_size AS size,b.sha256,
-                b.package_digest,NULL AS changelog,'approved' AS review_status,
+                b.package_digest,b.architecture,b.abi,NULL AS changelog,'approved' AS review_status,
                 'published' AS publish_status,b.download_url,b.github_repository,
                 b.github_release_tag,b.github_asset_id,b.asset_name,
                 b.certificate_id AS developer_certificate_id,b.created_at AS created_at
            FROM published_versions pv JOIN apps a ON a.app_id=pv.app_id
+           JOIN bundle_ids package ON package.bundle_id=a.bundle_id AND package.status='active'
            JOIN submissions s ON s.submission_id=pv.submission_id
            JOIN app_builds b ON b.build_id=s.build_id
            JOIN app_availability v ON v.app_id=a.app_id
           WHERE a.bundle_id=?1 AND v.status='available' AND b.machine_status='valid'
+            AND (?2 IS NULL OR b.architecture=?2) AND (?3 IS NULL OR b.abi=?3)
           UNION ALL
          SELECT r.release_id,r.bundle_id,r.version,r.file_size AS size,r.sha256,
-                r.package_digest,r.changelog,r.review_status,r.publish_status,r.download_url,
+                r.package_digest,r.architecture,r.abi,r.changelog,r.review_status,r.publish_status,r.download_url,
                 r.github_repository,r.github_release_tag,r.github_asset_id,r.asset_name,
                 r.developer_certificate_id,r.created_at
            FROM releases r JOIN bundle_ids b ON b.bundle_id=r.bundle_id
           WHERE r.bundle_id=?1 AND b.status='active' AND validation_status='valid'
             AND review_status='approved' AND publish_status='published'
             AND download_url IS NOT NULL AND sha256 IS NOT NULL AND signature IS NOT NULL
+            AND (?2 IS NULL OR r.architecture=?2) AND (?3 IS NULL OR r.abi=?3)
          ) ORDER BY created_at DESC",
-        &[value(bundle_id)],
+        &[
+            value(bundle_id),
+            architecture.map_or(JsValue::NULL, value),
+            abi.map_or(JsValue::NULL, value),
+        ],
     )
     .await
 }
 
-pub async fn acquired_releases(db: &D1Database, bundle_id: &str) -> Result<Vec<ReleaseView>> {
+pub async fn acquired_releases(
+    db: &D1Database,
+    bundle_id: &str,
+    architecture: Option<&str>,
+    abi: Option<&str>,
+) -> Result<Vec<ReleaseView>> {
     rows(
         db,
         "SELECT b.build_id AS release_id,a.bundle_id,b.version,b.file_size AS size,b.sha256,
-                b.package_digest,NULL AS changelog,'approved' AS review_status,
+                b.package_digest,b.architecture,b.abi,NULL AS changelog,'approved' AS review_status,
                 'published' AS publish_status,b.download_url,b.github_repository,
                 b.github_release_tag,b.github_asset_id,b.asset_name,
                 b.certificate_id AS developer_certificate_id,b.created_at
            FROM published_versions pv JOIN apps a ON a.app_id=pv.app_id
+           JOIN bundle_ids package ON package.bundle_id=a.bundle_id AND package.status='active'
            JOIN submissions s ON s.submission_id=pv.submission_id
            JOIN app_builds b ON b.build_id=s.build_id
           WHERE a.bundle_id=?1 AND b.machine_status='valid'
+            AND (?2 IS NULL OR b.architecture=?2) AND (?3 IS NULL OR b.abi=?3)
           ORDER BY pv.published_at DESC",
-        &[value(bundle_id)],
+        &[
+            value(bundle_id),
+            architecture.map_or(JsValue::NULL, value),
+            abi.map_or(JsValue::NULL, value),
+        ],
     )
     .await
 }
@@ -153,7 +176,7 @@ pub async fn developer_apps(db: &D1Database, developer_id: &str) -> Result<Vec<V
                 v.reason AS availability_reason,v.changed_at AS availability_changed_at,
                 c.certificate_id AS app_certificate_id,c.observed_status AS app_certificate_status
            FROM apps a LEFT JOIN app_availability v ON v.app_id=a.app_id
-           LEFT JOIN app_certificates c ON c.app_id=a.app_id AND c.is_current=1
+           LEFT JOIN app_certificates c ON c.app_id=a.app_id AND c.selected_for_new_builds=1
           WHERE a.developer_id=?1 ORDER BY a.created_at DESC",
         &[value(developer_id)],
     )
@@ -171,7 +194,7 @@ pub async fn developer_app(
                 v.reason AS availability_reason,v.changed_at AS availability_changed_at,
                 c.certificate_id AS app_certificate_id,c.observed_status AS app_certificate_status
            FROM apps a LEFT JOIN app_availability v ON v.app_id=a.app_id
-           LEFT JOIN app_certificates c ON c.app_id=a.app_id AND c.is_current=1
+           LEFT JOIN app_certificates c ON c.app_id=a.app_id AND c.selected_for_new_builds=1
           WHERE a.developer_id=?1 AND a.bundle_id=?2 LIMIT 1",
         &[value(developer_id), value(bundle_id)],
     )
@@ -195,7 +218,7 @@ const DEVELOPER_NOTIFICATION_ACTIONS: &str =
 const OPERATOR_NOTIFICATION_ACTIONS: &str =
     "'release.validation_succeeded','release.validation_failed','release.withdraw',
      'submission.submit','submission.information_provided','appeal.submit',
-     'app.developer_unpublish','app.certificate_replaced'";
+     'app.developer_unpublish','app.certificate_rotated'";
 
 pub async fn developer_notifications(
     db: &D1Database,

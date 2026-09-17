@@ -36,7 +36,11 @@ DeveloperCAがtokenからAccountとactive・verified Developer Memberを確定�
 
 Developer CAのstatusが有効で内部Developer IDと一致するときだけ、serial、Subject／Issuer key identity、Certificate Developer ID、発行経路をBuildへ固定します。Reviewer reportはこれらすべてと一致しなければ受理しません。report受理時とSubmission承認時にもstatusを再確認します。
 
-1 Appに割り当てられるcurrent Certificateは1つです。現在のCertificateがDeveloperCAで`revoked`になった場合だけ、`PATCH /v1/developer/apps/{bundle_id}/certificate`で新しいactive Certificateへ置換できます。過去BuildのCertificate記録は削除しません。
+1 Appには、新規Buildの登録に使用するCertificateを1つ選択します。`PATCH /v1/developer/apps/{bundle_id}/certificate`へ新しいCertificate IDと`"confirmation":"ROTATE"`を送ると、Developer CAでactiveであり、新旧とも同じDeveloperに属することを確認して計画的に切り替えます。旧Certificateの失効は要求しません。revoked／suspended／expiredなCertificateは選択できません。ローテーションはaudit logへ記録し、過去BuildのCertificate ID・固定identity・公開状態は変更しません。
+
+DeveloperがBuild登録requestへ`architecture`や`abi`を指定することはできません。MPKG Reviewerが署名済みmanifestの`package.architecture`と`package.abi`を検証し、validation attemptに拘束したreportとして送信した値だけをBuild metadataへ保存します。
+
+公開Release APIはこれらを返し、`GET /v1/apps/{bundle_id}/releases?architecture=x86_64&abi=mochios-1`およびdownload APIで完全一致filterを指定できます。AppStoreはOS marketing versionを比較せず、最終的なABI compatibility判断はmochiOSが行います。
 
 Package IDは`org.mochios.*`へ限定しません。`com.example.paint`、`io.github.user.tool`、`dev.tas0.volume`のような2 segment以上の小文字reverse-domain形式を共有Certificate crateで検証します。
 
@@ -60,14 +64,14 @@ Approved時にBuildの機械検証とDeveloper Certificateを再確認します�
 
 ## 取得履歴と再ダウンロード
 
-mochiOS IDのactive sessionをBearer tokenとして使い、初回取得時に次を呼び出します。
+Availableな無料Appは、mochiOS IDなしで`GET /v1/apps/{bundle_id}/download`から取得できます。取得前に次を呼ぶ場合も、未ログインなら履歴を作らずdownload URLを返します。
 
 ```http
 POST /v1/apps/{bundle_id}/acquisitions
-Authorization: Bearer <mochiOS ID session token>
+Authorization: Bearer <mochiOS ID session token（任意）>
 ```
 
-取得履歴は`app_acquisitions`へappend-onlyで保存します。AvailableなAppだけ新規取得できます。Developer UnpublishedまたはRemovedになった後は新規取得を拒否し、公開中に取得済みだった同じAccountだけ`GET /v1/apps/{bundle_id}/download`で再ダウンロードできます。Packageのセキュリティ停止中は取得済みでもダウンロードできません。
+ログイン済みの場合だけ取得履歴を`app_acquisitions`へappend-onlyで保存します。未ログインの場合は記録しません。AvailableなAppだけ新規取得できます。Developer UnpublishedまたはRemovedになった後は新規取得を拒否し、公開中に取得済みだった同じAccountだけ`GET /v1/apps/{bundle_id}/download`で再ダウンロードできます。Packageのセキュリティ停止中は、ログイン状態や取得履歴に関係なくダウンロードできません。
 
 公開状態とRemoved理由は`GET /v1/apps/{bundle_id}/status`で取得できます。Developerが自ら非公開にした理由は公開しません。
 

@@ -54,7 +54,7 @@ export default async function AppDetailPage({ params }: { params: Promise<{ slug
         {app.releases.length === 0 ? <div className="empty"><p>公開中のリリースはありません。</p></div> : (
           <div className="release-list">
             {app.releases.map((release) => (
-              <article className="release" key={release.version}>
+              <article className="release" key={release.release_id}>
                 <div className="release__copy">
                   <strong>バージョン {release.version}</strong>
                   <span>{formatBytes(release.size)} · {formatPublishedAt(release.created_at)}</span>

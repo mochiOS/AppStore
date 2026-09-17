@@ -16,4 +16,4 @@
 
 AppStoreはGitHub OAuth tokenを保持しません。登録時のリポジトリ権限とasset確認はAccountsの内部APIへ委譲し、Accountsが暗号化保管したOAuth grantを必要なときだけ復号します。
 
-審査ツールは`.mpkg`を一時ファイルへ取得しますが、AppStore WorkerやD1には保存しません。検証後にD1へ保存するのはSHA-256、manifest hash、署名、Certificate ID、審査・公開状態だけです。
+審査ツールは`.mpkg`を一時ファイルへ取得しますが、AppStore WorkerやD1には保存しません。検証後にD1へ保存するのはSHA-256、manifest hash、署名、Certificate identity、署名済みmanifestから抽出したarchitecture／ABI、審査・公開状態だけです。

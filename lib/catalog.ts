@@ -21,6 +21,8 @@ export type CatalogRelease = {
   size: number;
   sha256: string;
   package_digest: string;
+  architecture: string | null;
+  abi: string | null;
   changelog?: string | null;
   download_url: string;
   github_repository: string;

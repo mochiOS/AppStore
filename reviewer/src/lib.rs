@@ -66,6 +66,8 @@ pub struct ValidationReport {
     pub certificate_subject_key_id: String,
     pub certificate_developer_id: String,
     pub certificate_issuer_key_id: String,
+    pub architecture: String,
+    pub abi: String,
     pub capabilities: Vec<String>,
     pub payloads: Vec<PayloadReport>,
 }
@@ -110,6 +112,8 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
     let payloads = validate_manifest(&manifest, &files)?;
     let package_id = manifest_string(&manifest, &["package", "id"], "package.id")?;
     let version = manifest_string(&manifest, &["package", "version"], "package.version")?;
+    let architecture = manifest_compatibility_value(&manifest, "architecture")?;
+    let abi = manifest_compatibility_value(&manifest, "abi")?;
     ensure!(
         package_id == expected.package_id,
         "package ID differs from release"
@@ -183,6 +187,8 @@ pub fn inspect_mpkg(path: &Path, expected: &Expectations<'_>) -> Result<Validati
         certificate_subject_key_id: expected.certificate_subject_key_id.into(),
         certificate_developer_id: expected.certificate_developer_id.into(),
         certificate_issuer_key_id: expected.certificate_issuer_key_id.into(),
+        architecture: architecture.into(),
+        abi: abi.into(),
         capabilities,
         payloads,
     })
@@ -644,6 +650,22 @@ fn manifest_string<'a>(manifest: &'a toml::Value, path: &[&str], label: &str) ->
     Ok(value)
 }
 
+fn manifest_compatibility_value<'a>(manifest: &'a toml::Value, field: &str) -> Result<&'a str> {
+    let value = manifest_string(manifest, &["package", field], field)?;
+    ensure!(
+        value.len() <= 64
+            && value
+                .bytes()
+                .next()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && value.bytes().all(|byte| byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(byte, b'_' | b'-' | b'.')),
+        "manifest package.{field} is invalid"
+    );
+    Ok(value)
+}
+
 fn safe_archive_path(bytes: &[u8]) -> Result<String> {
     let path = std::str::from_utf8(bytes).context("archive path is not UTF-8")?;
     ensure!(
@@ -741,7 +763,7 @@ mod tests {
         let payload = b"ELF fixture";
         let digest = hex::encode(Sha256::digest(payload));
         let manifest = format!(
-            "format = 1\n[package]\nid = \"org.mochios.example\"\nname = \"Example\"\nversion = \"1.0.0\"\nkind = \"application\"\n\n[[file]]\nid = \"main\"\npath = \"$/entry.elf\"\ndigest = \"sha256:{digest}\"\nsize = {}\nmode = \"0755\"\n\n[[binary]]\npath = \"/applications/Example.app/entry.elf\"\nfile = \"main\"\nkind = \"application\"\nrequires = [\"window.create\"]\n",
+            "format = 1\n[package]\nid = \"org.mochios.example\"\nname = \"Example\"\nversion = \"1.0.0\"\nkind = \"application\"\narchitecture = \"x86_64\"\nabi = \"mochios-1\"\n\n[[file]]\nid = \"main\"\npath = \"$/entry.elf\"\ndigest = \"sha256:{digest}\"\nsize = {}\nmode = \"0755\"\n\n[[binary]]\npath = \"/applications/Example.app/entry.elf\"\nfile = \"main\"\nkind = \"application\"\nrequires = [\"window.create\"]\n",
             payload.len()
         );
         let issuer = SigningKey::from_bytes(&[3; 32]);
@@ -821,6 +843,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.package_id, "org.mochios.example");
+        assert_eq!(report.architecture, "x86_64");
+        assert_eq!(report.abi, "mochios-1");
         assert!(
             certificate
                 .verify(&issuer_public_key, 150, "com.example.outside")
@@ -941,7 +965,7 @@ mod tests {
 
     fn payload_manifest(digest: &str, size: u64, mode: &str, capabilities: &str) -> toml::Value {
         toml::from_str(&format!(
-            "format = 1\n[package]\nid = \"com.example.testapp\"\nname = \"TestApp\"\nversion = \"0.1.0\"\nkind = \"application\"\n\n[[file]]\nid = \"entry\"\npath = \"$/entry.elf\"\ndigest = \"sha256:{digest}\"\nsize = {size}\nmode = \"{mode}\"\n\n[[binary]]\npath = \"/applications/TestApp.app/entry.elf\"\nfile = \"entry\"\nkind = \"application\"\nrequires = [{capabilities}]\n"
+            "format = 1\n[package]\nid = \"com.example.testapp\"\nname = \"TestApp\"\nversion = \"0.1.0\"\nkind = \"application\"\narchitecture = \"x86_64\"\nabi = \"mochios-1\"\n\n[[file]]\nid = \"entry\"\npath = \"$/entry.elf\"\ndigest = \"sha256:{digest}\"\nsize = {size}\nmode = \"{mode}\"\n\n[[binary]]\npath = \"/applications/TestApp.app/entry.elf\"\nfile = \"entry\"\nkind = \"application\"\nrequires = [{capabilities}]\n"
         ))
         .unwrap()
     }
@@ -1024,6 +1048,33 @@ mod tests {
         assert!(validate_capabilities(&outside, &certificate).is_err());
         let invalid = payload_manifest(&digest, 3, "0755", "\"UNKNOWN Capability\"");
         assert!(validate_capabilities(&invalid, &certificate).is_err());
+    }
+
+    #[test]
+    fn compatibility_metadata_is_required_and_bounded() {
+        let valid: toml::Value = toml::from_str(
+            "format=1\n[package]\nid='com.example.app'\nname='App'\nversion='1'\narchitecture='x86_64'\nabi='mochios-1'",
+        )
+        .unwrap();
+        assert_eq!(
+            manifest_compatibility_value(&valid, "architecture").unwrap(),
+            "x86_64"
+        );
+        assert_eq!(
+            manifest_compatibility_value(&valid, "abi").unwrap(),
+            "mochios-1"
+        );
+
+        let missing: toml::Value =
+            toml::from_str("format=1\n[package]\nid='com.example.app'\nname='App'\nversion='1'")
+                .unwrap();
+        assert!(manifest_compatibility_value(&missing, "architecture").is_err());
+
+        let invalid: toml::Value = toml::from_str(
+            "format=1\n[package]\nid='com.example.app'\nname='App'\nversion='1'\narchitecture='../x64'",
+        )
+        .unwrap();
+        assert!(manifest_compatibility_value(&invalid, "architecture").is_err());
     }
 
     #[test]

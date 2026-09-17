@@ -431,6 +431,17 @@ fn certificate_matches_release(identity: &auth::CertificateIdentity, release: &V
             == value_str(release, "developer_certificate_issuance_source").unwrap_or("")
 }
 
+fn valid_compatibility_value(value: &str) -> bool {
+    value.len() <= 64
+        && value
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-' | b'.')
+        })
+}
+
 fn js_integer(value: u64) -> Option<f64> {
     (value <= MAX_SAFE_JS_INTEGER).then_some(value as f64)
 }
@@ -581,7 +592,7 @@ async fn app_detail(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let Some(app) = store::public_app(&db(&ctx)?, bundle_id).await? else {
         return error("APP_NOT_FOUND", "App not found", 404);
     };
-    let releases = store::public_releases(&db(&ctx)?, bundle_id).await?;
+    let releases = store::public_releases(&db(&ctx)?, bundle_id, None, None).await?;
     let screenshots: Vec<Value> = store::rows(
         &db(&ctx)?,
         "SELECT image_url FROM app_screenshots WHERE bundle_id=?1 ORDER BY position",
@@ -604,11 +615,23 @@ async fn app_releases(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         return Ok(response);
     }
     let bundle_id = param(&ctx, "bundle_id");
+    let query: HashMap<_, _> = req.url()?.query_pairs().into_owned().collect();
+    let architecture = query.get("architecture").map(String::as_str);
+    let abi = query.get("abi").map(String::as_str);
+    if architecture.is_some_and(|value| !valid_compatibility_value(value))
+        || abi.is_some_and(|value| !valid_compatibility_value(value))
+    {
+        return error(
+            "COMPATIBILITY_FILTER_INVALID",
+            "Compatibility filter is invalid",
+            422,
+        );
+    }
     if store::public_app(&db(&ctx)?, bundle_id).await?.is_none() {
         return error("APP_NOT_FOUND", "App not found", 404);
     }
     json_response(
-        &json!({"bundle_id":bundle_id,"releases":store::public_releases(&db(&ctx)?, bundle_id).await?}),
+        &json!({"bundle_id":bundle_id,"releases":store::public_releases(&db(&ctx)?, bundle_id, architecture, abi).await?}),
         200,
     )
 }
@@ -640,11 +663,19 @@ async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         return Ok(response);
     }
     let bundle_id = param(&ctx, "bundle_id");
-    let version = req
-        .url()?
-        .query_pairs()
-        .find(|(key, _)| key == "version")
-        .map(|(_, value)| value.into_owned());
+    let query: HashMap<_, _> = req.url()?.query_pairs().into_owned().collect();
+    let version = query.get("version").cloned();
+    let architecture = query.get("architecture").map(String::as_str);
+    let abi = query.get("abi").map(String::as_str);
+    if architecture.is_some_and(|value| !valid_compatibility_value(value))
+        || abi.is_some_and(|value| !valid_compatibility_value(value))
+    {
+        return error(
+            "COMPATIBILITY_FILTER_INVALID",
+            "Compatibility filter is invalid",
+            422,
+        );
+    }
     let database = db(&ctx)?;
     let Some(app) = store::first::<Value>(
         &database,
@@ -661,7 +692,7 @@ async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     };
     let status = value_str(&app, "status").unwrap_or("not_available");
     let releases = if status == "available" {
-        store::public_releases(&database, bundle_id).await?
+        store::public_releases(&database, bundle_id, architecture, abi).await?
     } else if matches!(status, "developer_unpublished" | "removed") {
         let account_id = match require_account(&req, &ctx.env).await? {
             Ok(account_id) => account_id,
@@ -684,7 +715,7 @@ async fn download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
                 403,
             );
         }
-        store::acquired_releases(&database, bundle_id).await?
+        store::acquired_releases(&database, bundle_id, architecture, abi).await?
     } else {
         return error("APP_NOT_AVAILABLE", "App is not available", 404);
     };
@@ -705,10 +736,11 @@ async fn acquire_app(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     {
         return Ok(response);
     }
-    let account_id = match require_account(&req, &ctx.env).await? {
-        Ok(account_id) => account_id,
-        Err(response) => return Ok(response),
-    };
+    let authorization_supplied = req.headers().get("Authorization")?.is_some();
+    let account_id = auth::account(&req, &ctx.env).await?;
+    if authorization_supplied && account_id.is_none() {
+        return error("ACCOUNT_UNAUTHORIZED", "Account session is invalid", 401);
+    }
     let bundle_id = param(&ctx, "bundle_id");
     let database = db(&ctx)?;
     let Some(app) = store::first::<Value>(
@@ -727,6 +759,17 @@ async fn acquire_app(req: Request, ctx: RouteContext<()>) -> Result<Response> {
         );
     };
     let app_id = value_str(&app, "app_id").unwrap_or("");
+    let Some(account_id) = account_id else {
+        return json_response(
+            &json!({
+                "bundle_id": bundle_id,
+                "recorded": false,
+                "acquisition": null,
+                "download_url": format!("/v1/apps/{bundle_id}/download")
+            }),
+            200,
+        );
+    };
     let timestamp = now();
     database
         .batch(vec![
@@ -758,7 +801,7 @@ async fn acquire_app(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     )
     .await?;
     json_response(
-        &json!({"bundle_id":bundle_id,"account_id":account_id,"acquisition":acquisition}),
+        &json!({"bundle_id":bundle_id,"account_id":account_id,"recorded":true,"acquisition":acquisition,"download_url":format!("/v1/apps/{bundle_id}/download")}),
         200,
     )
 }
@@ -1808,10 +1851,12 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
         Ok(input) => input,
         Err(response) => return Ok(response),
     };
-    if input.confirmation != "REPLACE" || input.certificate_id.trim().is_empty() {
+    if !matches!(input.confirmation.as_str(), "ROTATE" | "REPLACE")
+        || input.certificate_id.trim().is_empty()
+    {
         return error(
             "CERTIFICATE_REPLACEMENT_CONFIRMATION_REQUIRED",
-            "New certificate and REPLACE confirmation are required",
+            "New certificate and ROTATE confirmation are required",
             422,
         );
     }
@@ -1820,7 +1865,7 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
     let Some(current) = store::first::<Value>(
         &database,
         "SELECT a.app_id,c.certificate_id FROM apps a JOIN app_certificates c ON c.app_id=a.app_id
-          WHERE a.bundle_id=?1 AND a.developer_id=?2 AND c.is_current=1",
+          WHERE a.bundle_id=?1 AND a.developer_id=?2 AND c.selected_for_new_builds=1",
         &[store::value(bundle_id), store::value(&actor.developer_id)],
     )
     .await?
@@ -1846,13 +1891,11 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
             503,
         );
     };
-    if current_status.developer_record_id != actor.developer_id
-        || current_status.status != "revoked"
-    {
+    if current_status.developer_record_id != actor.developer_id {
         return error(
-            "CURRENT_CERTIFICATE_NOT_REVOKED",
-            "The current certificate must be revoked before replacement",
-            409,
+            "CURRENT_CERTIFICATE_DEVELOPER_MISMATCH",
+            "The selected certificate does not belong to this Developer",
+            403,
         );
     }
     if auth::certificate_identity(&ctx.env, input.certificate_id.trim(), &actor.developer_id)
@@ -1871,8 +1914,9 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
         .batch(vec![
             database
                 .prepare(
-                    "UPDATE app_certificates SET is_current=0,observed_status='revoked',
-                       last_verified_at=?1 WHERE app_id=?2 AND certificate_id=?3 AND is_current=1",
+                    "UPDATE app_certificates SET selected_for_new_builds=0,retired_at=?1,
+                       last_verified_at=?1 WHERE app_id=?2 AND certificate_id=?3
+                         AND selected_for_new_builds=1",
                 )
                 .bind(&[
                     store::number(timestamp),
@@ -1882,8 +1926,12 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
             database
                 .prepare(
                     "INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,
-                       assigned_at,last_verified_at,observed_status,is_current)
-                     VALUES(?1,?2,?3,?4,?4,'active',1)",
+                       assigned_at,last_verified_at,observed_status,selected_for_new_builds,retired_at)
+                     VALUES(?1,?2,?3,?4,?4,'active',1,NULL)
+                     ON CONFLICT(app_id,certificate_id) DO UPDATE SET
+                       assigned_by_account_id=excluded.assigned_by_account_id,
+                       last_verified_at=excluded.last_verified_at,
+                       observed_status='active',selected_for_new_builds=1,retired_at=NULL",
                 )
                 .bind(&[
                     store::value(app_id),
@@ -1894,10 +1942,10 @@ async fn replace_app_certificate(mut req: Request, ctx: RouteContext<()>) -> Res
             store::audit_statement(
                 &database,
                 Some(&actor.account_id),
-                "app.certificate_replaced",
+                "app.certificate_rotated",
                 "app",
                 bundle_id,
-                json!({"developer_id":actor.developer_id,"previous_certificate_id":current_id,"certificate_id":input.certificate_id}),
+                json!({"developer_id":actor.developer_id,"previous_certificate_id":current_id,"certificate_id":input.certificate_id,"previous_certificate_status":current_status.status,"result":"rotated"}),
                 timestamp,
             )?,
         ])
@@ -1962,7 +2010,8 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     };
     let assigned_certificate: Option<Value> = store::first(
         &database,
-        "SELECT certificate_id,observed_status FROM app_certificates WHERE app_id=?1 AND is_current=1",
+        "SELECT certificate_id,observed_status FROM app_certificates
+          WHERE app_id=?1 AND selected_for_new_builds=1",
         &[store::value(&app_id)],
     )
     .await?;
@@ -2095,8 +2144,12 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             "INSERT INTO app_builds(
                build_id,app_id,certificate_id,version,build_number,github_repository_id,
                github_repository,github_release_id,github_release_tag,github_asset_id,
-               asset_name,download_url,file_size,machine_status,registered_by_account_id,created_at)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'pending',?14,?15)",
+               asset_name,download_url,file_size,machine_status,registered_by_account_id,created_at,
+               certificate_serial,certificate_subject_public_key,certificate_subject_key_id,
+               certificate_developer_id,certificate_issuer_key_id,certificate_issuer_public_key,
+               certificate_issuance_source)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'pending',?14,?15,
+               ?16,?17,?18,?19,?20,?21,?22)",
         )
         .bind(&[
             store::value(&release_id),
@@ -2114,6 +2167,13 @@ async fn create_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
             store::value(asset.file_size as f64),
             store::value(&actor.account_id),
             store::number(timestamp),
+            store::value(&certificate.serial_number),
+            store::value(&certificate.public_key),
+            store::value(&certificate.subject_key_id),
+            store::value(&certificate.developer_id),
+            store::value(&certificate.issuer_key_id),
+            store::value(&certificate.issuer_public_key),
+            store::value(&certificate.issuance_source),
         ])?;
     let mut statements = Vec::new();
     if assigned_certificate.is_none() {
@@ -2532,6 +2592,8 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         || manifest_digest.len() != 64
         || hex::decode(&manifest_digest).is_err()
         || input.signature.trim().is_empty()
+        || !valid_compatibility_value(&input.architecture)
+        || !valid_compatibility_value(&input.abi)
         || input.capabilities.len() > 256
         || input.payloads.is_empty()
         || input.payloads.len() > 10_000
@@ -2594,9 +2656,10 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         "UPDATE releases
             SET sha256=?1,package_digest=?2,manifest_hash=?3,signature=?4,
                 capabilities_json=?5,payloads_json=?6,reviewer_version=?7,
+                architecture=?8,abi=?9,
                 validation_status='valid',review_status='submitted',validation_message=NULL,
-                validation_error_code=NULL,validated_at=?8,validated_by='mpkg-reviewer',submitted_at=?8
-          WHERE release_id=?9 AND github_asset_id=?10 AND validation_attempt_id=?11
+                validation_error_code=NULL,validated_at=?10,validated_by='mpkg-reviewer',submitted_at=?10
+          WHERE release_id=?11 AND github_asset_id=?12 AND validation_attempt_id=?13
             AND validation_status='pending' AND review_status='pending'
           RETURNING release_id",
         &[
@@ -2607,6 +2670,8 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             store::value(capabilities_json),
             store::value(payloads_json),
             store::value(input.reviewer_version.trim()),
+            store::value(&input.architecture),
+            store::value(&input.abi),
             store::number(input.validated_at as i64),
             store::value(release_id),
             store::value(expected_asset_id as f64),
@@ -2627,7 +2692,7 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
         "release.validation_succeeded",
         "release",
         release_id,
-        json!({"developer_id":input.certificate_developer_id,"asset_id":expected_asset_id,"asset_sha256":asset_sha256,"package_digest":package_digest,"reviewer_version":input.reviewer_version,"validation_attempt_id":input.validation_attempt_id,"file_size":input.file_size,"result":"valid"}),
+        json!({"developer_id":input.certificate_developer_id,"asset_id":expected_asset_id,"asset_sha256":asset_sha256,"package_digest":package_digest,"architecture":input.architecture,"abi":input.abi,"reviewer_version":input.reviewer_version,"validation_attempt_id":input.validation_attempt_id,"file_size":input.file_size,"result":"valid"}),
         timestamp,
     )
     .await?;
@@ -3915,6 +3980,7 @@ async fn request_revalidation(req: Request, ctx: RouteContext<()>) -> Result<Res
         "UPDATE releases SET validation_status='pending',review_status='pending',
             publish_status='draft',sha256=NULL,package_digest=NULL,manifest_hash=NULL,
             signature=NULL,capabilities_json=NULL,payloads_json=NULL,reviewer_version=NULL,
+            architecture=NULL,abi=NULL,
             validation_error_code=NULL,validation_message=NULL,validated_at=NULL,validated_by=NULL,
             submitted_at=NULL,reviewed_at=NULL,reviewed_by=NULL,published_at=NULL,withdrawn_at=?1,
             validation_attempt_id=NULL,validation_started_at=NULL
@@ -4199,6 +4265,18 @@ mod tests {
             }))
             .is_err()
         );
+        assert!(
+            serde_json::from_value::<model::ReleaseInput>(json!({
+                "version": "0.1.0",
+                "repository": "example/testapp",
+                "release_tag": "v0.1.0",
+                "asset": "TestApp.mpkg",
+                "certificate_id": "certificate",
+                "architecture": "x86_64",
+                "abi": "mochios-1"
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -4260,6 +4338,17 @@ mod tests {
             github_download_url("https://user@github.com/a/b/releases/download/v1/a.mpkg")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn reviewer_compatibility_values_are_bounded_identifiers() {
+        for valid in ["x86_64", "aarch64", "mochios-1", "mboot-linux-1"] {
+            assert!(valid_compatibility_value(valid), "rejected {valid}");
+        }
+        for invalid in ["", "X86_64", "../x86_64", "x86 64"] {
+            assert!(!valid_compatibility_value(invalid), "accepted {invalid}");
+        }
+        assert!(!valid_compatibility_value(&"a".repeat(65)));
     }
 
     #[test]
@@ -4386,7 +4475,8 @@ mod tests {
         assert!(production.contains("/v1/admin/submissions/:submission_id/decision"));
         assert!(production.contains("/v1/admin/apps/:bundle_id/remove"));
         assert!(production.contains("/v1/apps/:bundle_id/acquisitions"));
-        assert!(production.contains("require_account(&req, &ctx.env)"));
+        assert!(production.contains("let account_id = auth::account(&req, &ctx.env).await?"));
+        assert!(production.contains("\"recorded\": false"));
         let store = include_str!("store.rs");
         assert!(store.contains("'submission.decision','appeal.resolve','app.removed'"));
         assert!(
@@ -4399,5 +4489,6 @@ mod tests {
         let store = include_str!("store.rs");
         assert!(store.contains("SELECT * FROM (\n         SELECT b.build_id AS release_id"));
         assert!(store.contains(") ORDER BY created_at DESC"));
+        assert!(store.contains("b.package_digest,b.architecture,b.abi"));
     }
 }

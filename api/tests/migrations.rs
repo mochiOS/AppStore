@@ -16,6 +16,8 @@ const BACKFILL_BUNDLE_RESERVATION_AUDITS: &str =
     include_str!("../migrations/0010_backfill_bundle_reservation_audits.sql");
 const NOTIFICATION_READS: &str = include_str!("../migrations/0011_notification_reads.sql");
 const SUBMISSION_WORKFLOW: &str = include_str!("../migrations/0012_submission_workflow.sql");
+const CERTIFICATE_ROTATION_BUILD_COMPATIBILITY: &str =
+    include_str!("../migrations/0013_certificate_rotation_build_compatibility.sql");
 
 fn apply_all_migrations(connection: &Connection) {
     for migration in [
@@ -31,6 +33,7 @@ fn apply_all_migrations(connection: &Connection) {
         BACKFILL_BUNDLE_RESERVATION_AUDITS,
         NOTIFICATION_READS,
         SUBMISSION_WORKFLOW,
+        CERTIFICATE_ROTATION_BUILD_COMPATIBILITY,
     ] {
         connection
             .execute_batch(migration)
@@ -48,6 +51,87 @@ fn insert_workflow_fixture(connection: &Connection) {
            VALUES('app','cert-one','account',1);",
         )
         .unwrap();
+}
+
+#[test]
+fn compatibility_migration_backfills_immutable_build_certificate_identity() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    for migration in [
+        INITIAL,
+        GITHUB_RELEASES,
+        CERTIFICATE_SERIAL,
+        CERTIFICATE_IDENTITY,
+        UUID_DEVELOPER_IDS,
+        PACKAGE_SUSPENSIONS,
+        RELEASE_VALIDATION_REPORTS,
+        VALIDATION_ATTEMPT_LEASES,
+        REMOVE_PRICE_AND_MINIMUM_OS,
+        BACKFILL_BUNDLE_RESERVATION_AUDITS,
+        NOTIFICATION_READS,
+        SUBMISSION_WORKFLOW,
+    ] {
+        connection
+            .execute_batch(migration)
+            .expect("apply migration before compatibility migration");
+    }
+    insert_workflow_fixture(&connection);
+    connection
+        .execute_batch(
+            "INSERT INTO releases(
+               release_id,bundle_id,version,github_asset_id,file_size,
+               developer_certificate_id,developer_public_key,developer_certificate_serial,
+               developer_certificate_subject_key_id,developer_certificate_developer_id,
+               developer_certificate_issuer_key_id,developer_certificate_issuer_public_key,
+               developer_certificate_issuance_source,created_at)
+             VALUES('legacy-build','org.mochios.example','1.0.0',100,10,
+               'cert-one','public-one','serial-one','subject-one','developer',
+               'issuer-one','issuer-public','developer-ca',1);
+             INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
+               github_repository_id,github_repository,github_release_id,github_release_tag,
+               github_asset_id,asset_name,download_url,file_size,registered_by_account_id,created_at)
+             VALUES('legacy-build','app','cert-one','1.0.0',1,1,'example/app',10,'v1',100,
+               'app.mpkg','https://github.com/example/app/releases/download/v1/app.mpkg',10,
+               'account',1);",
+        )
+        .unwrap();
+
+    connection
+        .execute_batch(CERTIFICATE_ROTATION_BUILD_COMPATIBILITY)
+        .expect("apply compatibility migration");
+
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT certificate_id,certificate_serial,certificate_subject_public_key,
+                    certificate_subject_key_id,certificate_developer_id,certificate_issuer_key_id,
+                    certificate_issuer_public_key,certificate_issuance_source
+                   FROM app_builds WHERE build_id='legacy-build'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                    ))
+                },
+            )
+            .unwrap(),
+        (
+            "cert-one".into(),
+            "serial-one".into(),
+            "public-one".into(),
+            "subject-one".into(),
+            "developer".into(),
+            "issuer-one".into(),
+            "issuer-public".into(),
+            "developer-ca".into(),
+        )
+    );
 }
 
 #[test]
@@ -142,7 +226,7 @@ fn workflow_enforces_certificate_domain_and_append_only_history_invariants() {
 
     connection
         .execute(
-            "UPDATE app_certificates SET is_current=0,observed_status='revoked' WHERE app_id='app'",
+            "UPDATE app_certificates SET selected_for_new_builds=0,retired_at=2 WHERE app_id='app'",
             [],
         )
         .unwrap();
@@ -152,7 +236,7 @@ fn workflow_enforces_certificate_domain_and_append_only_history_invariants() {
              VALUES('app','cert-two','account',2)",
             [],
         )
-        .expect("a revoked certificate can be replaced without deleting build history");
+        .expect("an active certificate can be rotated without deleting build history");
 
     connection.execute_batch(
         "INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
@@ -214,6 +298,140 @@ fn workflow_enforces_certificate_domain_and_append_only_history_invariants() {
 }
 
 #[test]
+fn certificate_rotation_preserves_build_identity_and_can_select_a_prior_active_certificate() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    apply_all_migrations(&connection);
+    insert_workflow_fixture(&connection);
+    connection.execute_batch(
+        "INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
+           github_repository_id,github_repository,github_release_id,github_release_tag,
+           github_asset_id,asset_name,download_url,file_size,registered_by_account_id,created_at,
+           certificate_serial,certificate_subject_public_key,certificate_subject_key_id,
+           certificate_developer_id,certificate_issuer_key_id,certificate_issuer_public_key,
+           certificate_issuance_source)
+         VALUES('build-one','app','cert-one','1.0.0',1,1,'example/app',10,'v1',100,
+           'app.mpkg','https://github.com/example/app/releases/download/v1/app.mpkg',10,'account',1,
+           'serial-one','public-one','subject-one','developer','issuer-one','issuer-public','developer-ca');
+         UPDATE app_certificates SET selected_for_new_builds=0,retired_at=2
+           WHERE app_id='app' AND certificate_id='cert-one';
+         INSERT INTO app_certificates(app_id,certificate_id,assigned_by_account_id,assigned_at,
+           selected_for_new_builds) VALUES('app','cert-two','account',2,1);",
+    ).unwrap();
+
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT certificate_id FROM app_builds WHERE build_id='build-one'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        "cert-one"
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE app_builds SET certificate_id='cert-two' WHERE build_id='build-one'",
+                [],
+            )
+            .is_err()
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE app_builds SET certificate_serial='rewritten' WHERE build_id='build-one'",
+                [],
+            )
+            .is_err()
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT certificate_serial,certificate_subject_public_key,certificate_developer_id
+                   FROM app_builds WHERE build_id='build-one'",
+                [],
+                |row| Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?
+                )),
+            )
+            .unwrap(),
+        ("serial-one".into(), "public-one".into(), "developer".into())
+    );
+    connection
+        .execute_batch(
+            "UPDATE app_certificates SET selected_for_new_builds=0,retired_at=3
+           WHERE app_id='app' AND certificate_id='cert-two';
+         UPDATE app_certificates SET selected_for_new_builds=1,retired_at=NULL
+           WHERE app_id='app' AND certificate_id='cert-one';",
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT certificate_id FROM app_certificates
+              WHERE app_id='app' AND selected_for_new_builds=1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap(),
+        "cert-one"
+    );
+}
+
+#[test]
+fn reviewer_compatibility_metadata_is_projected_to_builds() {
+    let connection = Connection::open_in_memory().expect("open migration fixture");
+    apply_all_migrations(&connection);
+    insert_workflow_fixture(&connection);
+    connection.execute_batch(
+        "INSERT INTO releases(release_id,bundle_id,version,github_asset_id,file_size,
+           developer_certificate_id,developer_public_key,created_at)
+         VALUES('rel-compat','org.mochios.example','1.0.0',200,10,'cert-one','public',1);
+         INSERT INTO app_builds(build_id,app_id,certificate_id,version,build_number,
+           github_repository_id,github_repository,github_release_id,github_release_tag,
+           github_asset_id,asset_name,download_url,file_size,registered_by_account_id,created_at)
+         VALUES('rel-compat','app','cert-one','1.0.0',1,1,'example/app',20,'v1',200,
+           'app.mpkg','https://github.com/example/app/releases/download/v1/app.mpkg',10,'account',1);",
+    ).unwrap();
+    assert!(
+        connection
+            .execute(
+                "UPDATE releases SET validation_status='valid' WHERE release_id='rel-compat'",
+                [],
+            )
+            .is_err()
+    );
+    connection
+        .execute(
+            "UPDATE releases SET validation_status='valid',architecture='x86_64',abi='mochios-1'
+              WHERE release_id='rel-compat'",
+            [],
+        )
+        .unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT architecture,abi FROM app_builds WHERE build_id='rel-compat'",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap(),
+        ("x86_64".into(), "mochios-1".into())
+    );
+    assert!(
+        connection
+            .execute(
+                "UPDATE releases SET developer_certificate_id='cert-two'
+                  WHERE release_id='rel-compat'",
+                [],
+            )
+            .is_err()
+    );
+}
+
+#[test]
 fn appeals_are_not_limited_per_app_or_submission() {
     let connection = Connection::open_in_memory().expect("open migration fixture");
     apply_all_migrations(&connection);
@@ -260,12 +478,14 @@ fn legacy_reviewer_results_are_projected_to_builds() {
          VALUES('rel','app','cert-one','1.0.0',1,1,'example/app',10,'v1',100,
            'app.mpkg','https://github.com/example/app/releases/download/v1/app.mpkg',10,'account',1);
          UPDATE releases SET validation_status='valid',sha256='asset',package_digest='package',
+           architecture='x86_64',abi='mochios-1',
            manifest_hash='manifest',capabilities_json='[\"window.create\"]',reviewer_version='1.0',
            validated_at=2 WHERE release_id='rel';",
     ).unwrap();
     let result = connection
         .query_row(
-            "SELECT machine_status,sha256,package_digest,manifest_digest,capabilities_json
+            "SELECT machine_status,sha256,package_digest,manifest_digest,capabilities_json,
+                    architecture,abi
            FROM app_builds WHERE build_id='rel'",
             [],
             |row| {
@@ -275,6 +495,8 @@ fn legacy_reviewer_results_are_projected_to_builds() {
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
@@ -286,7 +508,9 @@ fn legacy_reviewer_results_are_projected_to_builds() {
             "asset".into(),
             "package".into(),
             "manifest".into(),
-            "[\"window.create\"]".into()
+            "[\"window.create\"]".into(),
+            "x86_64".into(),
+            "mochios-1".into()
         )
     );
 }

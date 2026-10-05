@@ -29,6 +29,32 @@ fn constant_time_eq(expected: &str, provided: &str) -> bool {
     expected.len() == provided.len() && bool::from(expected.as_bytes().ct_eq(provided.as_bytes()))
 }
 
+async fn console_identity(req: &Request, env: &worker::Env) -> Result<Option<(String, String)>> {
+    let expected = env
+        .secret_store("CONSOLE_SERVICE_TOKEN")?
+        .get()
+        .await?
+        .unwrap_or_default();
+
+    let provided = req
+        .headers()
+        .get("X-Console-Service-Token")?
+        .unwrap_or_default();
+
+    if expected.is_empty() || !constant_time_eq(&expected, &provided) {
+        return Ok(None);
+    }
+
+    let account_id = req.headers().get("X-Account-ID")?.unwrap_or_default();
+    let account_id = account_id.trim();
+
+    if account_id.is_empty() || account_id.len() > 128 {
+        return Ok(None);
+    }
+
+    Ok(Some((account_id.to_owned(), provided)))
+}
+
 #[derive(Debug, Deserialize)]
 struct DeveloperEnvelope {
     developer: DeveloperRecord,
@@ -71,6 +97,10 @@ struct AccountRecord {
 }
 
 pub async fn account(req: &Request, env: &worker::Env) -> Result<Option<String>> {
+    if let Some((account_id, _)) = console_identity(req, env).await? {
+        return Ok(Some(account_id));
+    }
+
     let Some(headers) = authorization_headers(req)? else {
         return Ok(None);
     };
@@ -94,12 +124,25 @@ pub async fn account(req: &Request, env: &worker::Env) -> Result<Option<String>>
 
 pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<DeveloperActor>> {
     let developer_id = req.headers().get("X-Developer-ID")?.unwrap_or_default();
-    let Some(headers) = authorization_headers(req)? else {
-        return Ok(None);
-    };
     if !mochios_certificate::is_valid_developer_id(&developer_id) {
         return Ok(None);
     }
+    let (headers, expected_account_id) =
+        if let Some((account_id, service_token)) = console_identity(req, env).await? {
+            let headers = Headers::new();
+
+            headers.set("X-Console-Service-Token", &service_token)?;
+
+            headers.set("X-Account-ID", &account_id)?;
+
+            (headers, Some(account_id))
+        } else {
+            let Some(headers) = authorization_headers(req)? else {
+                return Ok(None);
+            };
+
+            (headers, None)
+        };
     let mut init = RequestInit::new();
     init.with_method(Method::Get).with_headers(headers);
     let request = Request::new_with_init(
@@ -120,7 +163,10 @@ pub async fn developer(req: &Request, env: &worker::Env) -> Result<Option<Develo
             envelope.membership.role.as_str(),
             "owner" | "admin" | "developer"
         )
-        && !envelope.membership.account_id.is_empty();
+        && !envelope.membership.account_id.is_empty()
+        && expected_account_id
+            .as_deref()
+            .is_none_or(|account_id| envelope.membership.account_id == account_id);
     Ok(authorized.then_some(DeveloperActor {
         developer_id,
         account_id: envelope.membership.account_id,

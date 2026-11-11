@@ -98,30 +98,8 @@ export async function listApps(filters?: { kind?: "app" | "game"; category?: str
 
 export async function getStorefront(): Promise<Storefront> {
   const storefront = await request<Storefront>("/storefront");
-  const hasStorefrontApps = storefront && (
-    storefront.featured.length > 0 ||
-    storefront.sections.some((section) => section.apps.length > 0)
-  );
-  if (hasStorefrontApps) return storefront;
-  if (storefront?.categories.length) return storefront;
-  const apps = await listApps();
-  const catalogApps = apps.filter((app) => app.kind !== "game");
-  const games = apps.filter((app) => app.kind === "game");
-  const categories = Array.from(
-    new Map(
-      apps
-        .filter((app) => app.category)
-        .map((app) => [app.category as string, { slug: app.category as string, name: app.category as string }]),
-    ).values(),
-  );
-  return {
-    featured: [],
-    sections: [
-      ...(catalogApps.length ? [{ id: "apps", title: "アプリ", layout: "row" as const, apps: catalogApps }] : []),
-      ...(games.length ? [{ id: "games", title: "ゲーム", layout: "row" as const, apps: games }] : []),
-    ],
-    categories,
-  };
+  if (!storefront) throw new Error("App Store API returned an invalid storefront");
+  return storefront;
 }
 
 export async function findApp(bundleId: string): Promise<CatalogAppDetail | null> {

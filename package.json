@@ -9,6 +9,7 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "check:worker": "tsc --project tsconfig.worker.json",
     "api:check": "cargo check --manifest-path api/Cargo.toml --target wasm32-unknown-unknown",
     "api:test": "cargo test --manifest-path api/Cargo.toml --lib",
     "api:dev": "cd api && wrangler dev",

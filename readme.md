@@ -57,6 +57,20 @@ GET /storefront
 アプリアイコンはAPIレスポンスの`icon`で指定します。フロントエンド側で絵文字や生成画像へ置き換えません。
 ストアフロントはこれらの公開APIだけを呼び出し、管理用情報や審査中データは表示しません。
 
+## 公開ページのキャッシュ
+
+公開ページとAPI取得結果はOpenNext標準のR2キャッシュを使います。見つける・ゲーム・カテゴリ・App詳細の再検証間隔は60秒で、期限後のアクセスをきっかけにDurable Object Queueで更新します。検索やカテゴリfilterのqueryは従来どおり処理し、HTMLとRSCのキャッシュはOpenNextが分離します。
+
+初回の公開前にキャッシュ用bucketを作成します。Queueのmigrationはdeploy時に適用されます。
+
+```sh
+npx wrangler r2 bucket create mochios-app-store-cache
+```
+
+`src/worker.ts`はNextのbuild済みroute manifestを参照し、存在しないrouteや静的assetへはbuild済みの404 HTMLを返します。正規route、App詳細の動的route、Nextの画像処理は生成されたOpenNext handlerへ渡します。
+
+Workerの型検証はOpenNextのbuild後に`npm run cf-typegen`と`npm run check:worker`で実行します。
+
 ## ローカル開発
 
 ```powershell

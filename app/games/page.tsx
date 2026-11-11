@@ -3,7 +3,7 @@ import { AppList } from "@/components/app-card";
 import { listApps } from "@/lib/catalog";
 
 export const metadata: Metadata = { title: "ゲーム" };
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 export default async function GamesPage() {
   const apps = await listApps({ kind: "game" });

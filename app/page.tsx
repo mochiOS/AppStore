@@ -2,7 +2,7 @@ import Link from "next/link";
 import { FeatureCard, StoreSection } from "@/components/app-card";
 import { getStorefront, resolveAssetUrl } from "@/lib/catalog";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 export default async function StorePage() {
   const storefront = await getStorefront();

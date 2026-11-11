@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getStorefront, resolveAssetUrl } from "@/lib/catalog";
 
 export const metadata: Metadata = { title: "カテゴリ" };
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 export default async function CategoriesPage() {
   const { categories } = await getStorefront();

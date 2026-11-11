@@ -30,5 +30,31 @@
       "globs": ["**/_not-found.html"],
       "fallthrough": true
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "NEXT_INC_CACHE_R2_BUCKET",
+      "bucket_name": "mochios-app-store-cache"
+    }
+  ],
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "mochios-app-store"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "NEXT_CACHE_DO_QUEUE",
+        "class_name": "DOQueueHandler"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "storefront-cache-v1",
+      "new_sqlite_classes": ["DOQueueHandler"]
+    }
   ]
 }

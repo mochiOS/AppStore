@@ -5,6 +5,12 @@ import { AppIcon } from "@/components/app-icon";
 import { MaterialIcon } from "@/components/material-icon";
 import { findApp, formatBytes, formatPublishedAt, resolveAssetUrl, resolveDownloadUrl } from "@/lib/catalog";
 
+export const revalidate = 60;
+
+export function generateStaticParams() {
+  return [];
+}
+
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const app = await findApp((await params).slug);
   return app ? { title: app.name, description: app.description } : {};

@@ -182,7 +182,7 @@ pub struct TeamAssignment {
     pub team_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScreenshotInput {
     pub position: u32,
@@ -202,6 +202,10 @@ pub struct DataCategoryInput {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubmissionDraftInput {
+    #[serde(default)]
+    pub release_notes: String,
+    #[serde(default)]
+    pub declarations_confirmed: bool,
     pub build_id: String,
     pub submission_kind: String,
     #[serde(default)]

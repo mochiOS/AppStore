@@ -46,6 +46,17 @@ DeveloperがBuild登録requestへ`architecture`や`abi`を指定することは�
 
 Package IDは`org.mochios.*`へ限定しません。`com.example.paint`、`io.github.user.tool`、`dev.tas0.volume`のような2 segment以上の小文字reverse-domain形式を共有Certificate crateで検証します。
 
+## Store InformationとVersions
+
+`GET/PATCH /v1/developer/apps/{package_id}/store-information`はアプリ共通の下書きを読み書きします。
+PATCHは`{"revision":0,"information":{...}}`形式です。revisionが古い場合は409となり、他の編集を上書きしません。
+名前、説明、512px PNG/JPEGアイコン、カテゴリ、年齢区分、スクリーンショットを保存します。画像本体はDeveloper Consoleの既存MEDIAを使用し、URLは更新・削除せず、提出済み画像も保持します。
+
+Versionsは既存の`/v1/developer/apps/{package_id}/submissions`を使用します。POST/PATCHではBuild、release_notes、Capability利用理由、審査用申告・情報を送ります。Store InformationとDeveloper名はサーバー側で確定し、下書きへコピーします。
+Store Informationを変更した場合はVersion下書きを保存し直してスナップショットを確認します。提出時には最新revision、検証済みBuild、全Capabilityの利用理由、`declarations_confirmed=true`を要求します。
+提出後のスナップショットはDB制約でも変更・削除を拒否し、公開表示は承認済みスナップショットから生成します。
+機械検証の成功はBuildをvalidにするだけです。旧Build単体のapprove APIは409を返し、Submissionを経由した承認だけを許可します。
+
 ## Submission審査
 
 ```text

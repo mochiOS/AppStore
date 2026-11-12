@@ -72,7 +72,7 @@ Issuer公開鍵はDeveloper CAがOffline Root署名Trust Snapshotまたはlegacy
 
 Package IDは`org.mochios.*`へ限定せず、共有`mochios-certificate` validatorで2 segment以上の小文字reverse-domain形式を検証します。
 
-成功後、Releaseは`validation_status=valid`、`review_status=submitted`になります。審査担当者は[Console](https://console.mochios.org/#reviews)で最終承認または却下します。
+成功後、Buildは`validation_status=valid`になります。機械検証だけでは審査へ提出しません。Developer ConsoleのStore Informationで説明・画像を保存し、Versionsで検証済みBuildとCapability利用理由・申告を確認して、明示的に提出します。審査はSubmissionを対象として行います。
 
 Reviewer専用tokenはConsoleの`ADMIN_TOKEN`と分離します。検証reportはRelease ID、GitHub Asset ID、Asset SHA-256、Package digest、Reviewer version、検証時刻へ拘束され、別Releaseへ再利用できません。失敗時も固定error codeと短いsummaryだけを保存し、MPKG本体やraw payloadは保存しません。
 

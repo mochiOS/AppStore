@@ -2,6 +2,7 @@ mod auth;
 mod media;
 mod model;
 mod store;
+mod store_information;
 pub mod workflow;
 
 use std::collections::{HashMap, HashSet};
@@ -301,6 +302,7 @@ fn valid_submission_draft(input: &SubmissionDraftInput) -> bool {
         && input.primary_purpose == "general"
         && (!input.uses_ai_generated_content || input.disclose_ai_generated_content)
         && input.content_declarations.is_object()
+        && input.release_notes.chars().count() <= 4000
         && valid_optional_text(input.category.as_deref(), 80)
         && valid_optional_text(input.age_rating.as_deref(), 40)
         && input
@@ -1142,6 +1144,7 @@ async fn submission_payload(database: &D1Database, submission_id: &str) -> Resul
     let Some(mut submission) = store::first::<Value>(
         database,
         "SELECT s.*,d.*,a.bundle_id,a.developer_id,b.machine_status,b.github_repository,
+                (SELECT revision FROM app_store_information i WHERE i.app_id=s.app_id) AS current_store_information_revision,
                 b.github_release_tag,b.asset_name,b.file_size,b.sha256,b.package_digest,
                 b.manifest_digest,b.certificate_id
            FROM submissions s JOIN submission_details d USING(submission_id)
@@ -1236,7 +1239,7 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
         let submissions: Vec<Value> = store::rows(
             &database,
             "SELECT s.submission_id,s.build_id,s.version,s.submission_number,s.submission_kind,
-                    s.state,s.previous_submission_id,s.created_at,s.updated_at,s.submitted_at,
+                    s.state,s.previous_submission_id,s.created_at,s.updated_at,s.submitted_at,s.release_notes,
                     d.app_name,b.machine_status
                FROM submissions s JOIN submission_details d USING(submission_id)
                JOIN app_builds b ON b.build_id=s.build_id
@@ -1251,10 +1254,11 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
     {
         return Ok(response);
     }
-    let input: SubmissionDraftInput = match bounded_json(&mut req).await? {
-        Ok(input) => input,
-        Err(response) => return Ok(response),
-    };
+    let (input, information_revision) =
+        match store_information::snapshot_input(&mut req, &database, app_id, &actor).await? {
+            Ok(input) => input,
+            Err(response) => return Ok(response),
+        };
     if !valid_submission_draft(&input) {
         return error(
             "SUBMISSION_INVALID",
@@ -1271,7 +1275,7 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
     }
     let Some(build) = store::first::<Value>(
         &database,
-        "SELECT build_id,version,capabilities_json FROM app_builds WHERE build_id=?1 AND app_id=?2",
+        "SELECT build_id,version,capabilities_json,machine_status FROM app_builds WHERE build_id=?1 AND app_id=?2",
         &[store::value(input.build_id.trim()), store::value(app_id)],
     )
     .await?
@@ -1285,6 +1289,13 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
             "PREVIOUS_SUBMISSION_INVALID",
             "Previous Submission must be a Changes Required or Rejected Submission for this App",
             422,
+        );
+    }
+    if value_str(&build, "machine_status") != Some("valid") {
+        return error(
+            "BUILD_NOT_VALIDATED",
+            "Choose a Build whose signature validation has completed",
+            409,
         );
     }
     let capabilities = value_str(&build, "capabilities_json")
@@ -1333,13 +1344,15 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
     let mut statements = vec![
         database.prepare(
             "INSERT INTO submissions(submission_id,app_id,build_id,version,submission_number,
-               submission_kind,state,previous_submission_id,created_by_account_id,created_at,updated_at)
-             VALUES(?1,?2,?3,?4,?5,?6,'draft',?7,?8,?9,?9)",
+               submission_kind,state,previous_submission_id,created_by_account_id,created_at,updated_at,
+               store_information_revision,release_notes,declarations_confirmed)
+             VALUES(?1,?2,?3,?4,?5,?6,'draft',?7,?8,?9,?9,?10,?11,?12)",
         ).bind(&[
             store::value(&submission_id), store::value(app_id), store::value(input.build_id.trim()),
             store::value(value_str(&build, "version").unwrap_or("")), store::number(submission_number),
             store::value(&input.submission_kind), optional_value(input.previous_submission_id.as_deref()),
             store::value(&actor.account_id), store::number(timestamp),
+            store::number(information_revision),store::value(input.release_notes.trim()),bool_value(input.declarations_confirmed),
         ])?,
     ];
     statements.extend(draft_detail_statements(
@@ -1400,7 +1413,14 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
             409,
         );
     }
-    let input: SubmissionDraftInput = match bounded_json(&mut req).await? {
+    let (input, information_revision) = match store_information::snapshot_input(
+        &mut req,
+        &database,
+        value_str(&owned, "app_id").unwrap_or(""),
+        &actor,
+    )
+    .await?
+    {
         Ok(input) => input,
         Err(response) => return Ok(response),
     };
@@ -1420,7 +1440,7 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
     }
     let Some(build) = store::first::<Value>(
         &database,
-        "SELECT build_id,version,capabilities_json FROM app_builds WHERE build_id=?1 AND app_id=?2",
+        "SELECT build_id,version,capabilities_json,machine_status FROM app_builds WHERE build_id=?1 AND app_id=?2",
         &[
             store::value(input.build_id.trim()),
             store::value(value_str(&owned, "app_id").unwrap_or("")),
@@ -1443,6 +1463,13 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
             422,
         );
     }
+    if value_str(&build, "machine_status") != Some("valid") {
+        return error(
+            "BUILD_NOT_VALIDATED",
+            "Choose a Build whose signature validation has completed",
+            409,
+        );
+    }
     let capabilities = value_str(&build, "capabilities_json")
         .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
         .unwrap_or_default();
@@ -1462,7 +1489,8 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
         database
             .prepare(
                 "UPDATE submissions SET build_id=?1,version=?2,submission_kind=?3,
-           previous_submission_id=?4,updated_at=?5 WHERE submission_id=?6 AND state='draft'",
+           previous_submission_id=?4,updated_at=?5,store_information_revision=?7,release_notes=?8,
+           declarations_confirmed=?9 WHERE submission_id=?6 AND state='draft'",
             )
             .bind(&[
                 store::value(input.build_id.trim()),
@@ -1471,6 +1499,9 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
                 optional_value(input.previous_submission_id.as_deref()),
                 store::number(timestamp),
                 store::value(submission_id),
+                store::number(information_revision),
+                store::value(input.release_notes.trim()),
+                bool_value(input.declarations_confirmed),
             ])?,
     ];
     statements.extend(draft_detail_statements(
@@ -1506,7 +1537,12 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
     let database = db(&ctx)?;
     let Some(submission) = store::first::<Value>(
         &database,
-        "SELECT s.state,s.version,s.submission_kind,s.app_id,b.machine_status,
+        "SELECT s.state,s.version,s.submission_kind,s.app_id,b.machine_status,s.declarations_confirmed,
+                s.store_information_revision,
+                (SELECT revision FROM app_store_information i WHERE i.app_id=s.app_id) AS current_information_revision,
+                (SELECT COUNT(*) FROM json_each(COALESCE(b.capabilities_json,'[]')) c WHERE NOT EXISTS (
+                  SELECT 1 FROM submission_capabilities r WHERE r.submission_id=s.submission_id
+                    AND r.capability=c.value AND length(trim(COALESCE(r.usage_reason,'')))>0)) AS missing_capability_reasons,
                 d.external_communication,d.external_communication_reason,
                 d.external_communication_purpose,d.collects_data,d.data_collection_description,
                 d.executes_dynamic_code,d.dynamic_code_explanation,d.uses_external_updates,
@@ -1552,7 +1588,18 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
     };
     let present =
         |name: &str| value_str(&submission, name).is_some_and(|value| !value.trim().is_empty());
-    let valid_required = number("screenshot_count") >= 3
+    if submission["store_information_revision"] != submission["current_information_revision"]
+        || submission["store_information_revision"].is_null()
+    {
+        return error(
+            "STORE_INFORMATION_CHANGED",
+            "Store Information changed. Save the Version draft and review its updated snapshot before submitting.",
+            409,
+        );
+    }
+    let valid_required = number("declarations_confirmed") == 1
+        && number("missing_capability_reasons") == 0
+        && number("screenshot_count") >= 3
         && number("actual_ui_count") >= 1
         && (number("external_communication") == 0
             || (present("external_communication_reason")
@@ -1607,12 +1654,12 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
         );
     }
     let timestamp = now();
-    database
+    let saved = database
         .batch(vec![
             database
                 .prepare(
                     "UPDATE submissions SET state='submitted',submitted_at=?1,updated_at=?1
-              WHERE submission_id=?2 AND state='draft'",
+              WHERE submission_id=?2",
                 )
                 .bind(&[store::number(timestamp), store::value(submission_id)])?,
             store::audit_statement(
@@ -1625,7 +1672,20 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
                 timestamp,
             )?,
         ])
-        .await?;
+        .await;
+    if let Err(cause) = saved {
+        let message = cause.to_string();
+        if message.contains("store information changed")
+            || message.contains("submission already submitted")
+        {
+            return error(
+                "SUBMISSION_CHANGED",
+                "The draft changed. Reload and review it before submitting.",
+                409,
+            );
+        }
+        return Err(cause);
+    }
     json_response(
         &json!({"submission":submission_payload(&database, submission_id).await?}),
         200,
@@ -2660,8 +2720,8 @@ async fn validate_release(mut req: Request, ctx: RouteContext<()>) -> Result<Res
             SET sha256=?1,package_digest=?2,manifest_hash=?3,signature=?4,
                 capabilities_json=?5,payloads_json=?6,reviewer_version=?7,
                 architecture=?8,abi=?9,
-                validation_status='valid',review_status='submitted',validation_message=NULL,
-                validation_error_code=NULL,validated_at=?10,validated_by='mpkg-reviewer',submitted_at=?10
+                validation_status='valid',review_status='pending',validation_message=NULL,
+                validation_error_code=NULL,validated_at=?10,validated_by='mpkg-reviewer',submitted_at=NULL
           WHERE release_id=?11 AND github_asset_id=?12 AND validation_attempt_id=?13
             AND validation_status='pending' AND review_status='pending'
           RETURNING release_id",
@@ -3354,83 +3414,13 @@ async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response>
 }
 
 async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    if let Some(response) = rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "approve").await?
-    {
+    if let Err(response) = require_admin(&req, &ctx.env)? {
         return Ok(response);
     }
-    let actor = match require_admin(&req, &ctx.env)? {
-        Ok(v) => v,
-        Err(r) => return Ok(r),
-    };
-    let release_id = param(&ctx, "release_id");
-    let Some(release) = store::release_by_id(&db(&ctx)?, release_id).await? else {
-        return error("RELEASE_NOT_FOUND", "Release not found", 404);
-    };
-    if value_str(&release, "validation_status") != Some("valid")
-        || value_str(&release, "review_status") != Some("submitted")
-        || value_str(&release, "publish_status") != Some("draft")
-    {
-        return error(
-            "INVALID_RELEASE_STATUS",
-            "Only validated submitted releases can be approved",
-            409,
-        );
-    }
-    let Some(identity) = auth::certificate_identity(
-        &ctx.env,
-        value_str(&release, "developer_certificate_id").unwrap_or(""),
-        value_str(&release, "registered_by").unwrap_or(""),
-    )
-    .await?
-    else {
-        return error(
-            "CERTIFICATE_INVALID",
-            "The Developer Certificate is no longer valid",
-            403,
-        );
-    };
-    if !certificate_matches_release(&identity, &release) {
-        return error(
-            "CERTIFICATE_IDENTITY_MISMATCH",
-            "Developer Certificate identity differs from the reviewed release",
-            409,
-        );
-    }
-    let timestamp = now();
-    store::run(&db(&ctx)?,"UPDATE releases SET review_status='approved',publish_status='published',review_message=NULL,reviewed_at=?1,reviewed_by=?2,published_at=?1 WHERE release_id=?3",&[store::number(timestamp),store::value(&actor),store::value(release_id)]).await?;
-    store::run(
-        &db(&ctx)?,
-        "UPDATE apps SET latest_version=?1,visibility='public',updated_at=?2 WHERE bundle_id=?3",
-        &[
-            store::value(value_str(&release, "version").unwrap_or("")),
-            store::number(timestamp),
-            store::value(value_str(&release, "bundle_id").unwrap_or("")),
-        ],
-    )
-    .await?;
-    store::audit(
-        &db(&ctx)?,
-        Some(&actor),
-        "release.approve",
-        "release",
-        release_id,
-        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"approved"}),
-        timestamp,
-    )
-    .await?;
-    store::audit(
-        &db(&ctx)?,
-        Some(&actor),
-        "release.publish",
-        "release",
-        release_id,
-        json!({"developer_id":value_str(&release,"registered_by"),"asset_id":release.get("github_asset_id"),"package_id":value_str(&release,"bundle_id"),"result":"published"}),
-        timestamp,
-    )
-    .await?;
-    json_response(
-        &json!({"release":store::release_by_id(&db(&ctx)?,release_id).await?}),
-        200,
+    error(
+        "SUBMISSION_REQUIRED",
+        "Review and approve an explicitly submitted Version instead of a Build",
+        409,
     )
 }
 
@@ -4041,6 +4031,14 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/v1/developer/apps", developer_apps)
         .get_async("/v1/developer/apps/:bundle_id", developer_app)
         .patch_async("/v1/developer/apps/:bundle_id", developer_app)
+        .get_async(
+            "/v1/developer/apps/:bundle_id/store-information",
+            store_information::handler,
+        )
+        .patch_async(
+            "/v1/developer/apps/:bundle_id/store-information",
+            store_information::handler,
+        )
         .get_async(
             "/v1/developer/apps/:bundle_id/submissions",
             developer_submissions,

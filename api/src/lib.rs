@@ -1,3 +1,4 @@
+mod admin_notifications;
 mod auth;
 mod media;
 mod model;
@@ -508,8 +509,8 @@ async fn require_account(
     })
 }
 
-fn require_admin(req: &Request, env: &Env) -> Result<std::result::Result<String, Response>> {
-    Ok(match auth::admin(req, env)? {
+async fn require_admin(req: &Request, env: &Env) -> Result<std::result::Result<String, Response>> {
+    Ok(match auth::admin(req, env).await? {
         Some(id) => Ok(id),
         None => Err(error(
             "ADMIN_AUTH_REQUIRED",
@@ -1146,7 +1147,7 @@ async fn submission_payload(database: &D1Database, submission_id: &str) -> Resul
         "SELECT s.*,d.*,a.bundle_id,a.developer_id,b.machine_status,b.github_repository,
                 (SELECT revision FROM app_store_information i WHERE i.app_id=s.app_id) AS current_store_information_revision,
                 b.github_release_tag,b.asset_name,b.file_size,b.sha256,b.package_digest,
-                b.manifest_digest,b.certificate_id
+                b.manifest_digest,b.certificate_id,b.architecture,b.abi,b.reviewer_version,b.validated_at
            FROM submissions s JOIN submission_details d USING(submission_id)
            JOIN apps a ON a.app_id=s.app_id JOIN app_builds b ON b.build_id=s.build_id
           WHERE s.submission_id=?1",
@@ -1543,7 +1544,7 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
                 (SELECT COUNT(*) FROM json_each(COALESCE(b.capabilities_json,'[]')) c WHERE NOT EXISTS (
                   SELECT 1 FROM submission_capabilities r WHERE r.submission_id=s.submission_id
                     AND r.capability=c.value AND length(trim(COALESCE(r.usage_reason,'')))>0)) AS missing_capability_reasons,
-                d.external_communication,d.external_communication_reason,
+                d.app_name,d.developer_name,d.external_communication,d.external_communication_reason,
                 d.external_communication_purpose,d.collects_data,d.data_collection_description,
                 d.executes_dynamic_code,d.dynamic_code_explanation,d.uses_external_updates,
                 d.external_updates_explanation,d.requires_login,d.test_account,d.test_instructions,
@@ -1662,6 +1663,25 @@ async fn submit_developer_submission(req: Request, ctx: RouteContext<()>) -> Res
               WHERE submission_id=?2",
                 )
                 .bind(&[store::number(timestamp), store::value(submission_id)])?,
+            database.prepare(
+                "INSERT INTO admin_notification_outbox(id,payload_json,next_attempt_at) VALUES(?1,?2,?3)"
+            ).bind(&[
+                store::value(format!("app-review:{submission_id}")),
+                store::value(serde_json::to_string(&json!({
+                    "event_id":format!("app-review:{submission_id}"),
+                    "kind":"app.review.submitted",
+                    "title":"App submitted for review",
+                    "description":format!("{} {}",value_str(&submission,"app_name").unwrap_or(""),value_str(&submission,"version").unwrap_or("")),
+                    "action_path":format!("/app-store/submissions/{submission_id}"),
+                    "fields":[
+                        {"name":"Bundle ID","value":bundle_id,"inline":false},
+                        {"name":"Developer","value":value_str(&submission,"developer_name").unwrap_or(""),"inline":true},
+                        {"name":"Version","value":value_str(&submission,"version").unwrap_or(""),"inline":true},
+                        {"name":"Submission","value":submission_id,"inline":false}
+                    ]
+                }))?),
+                store::number(timestamp),
+            ])?,
             store::audit_statement(
                 &database,
                 Some(&actor.account_id),
@@ -1729,7 +1749,7 @@ async fn answer_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Re
     }
     let timestamp = now();
     let message_id = id("msg");
-    database.batch(vec![
+    let saved = database.batch(vec![
         database.prepare(
             "INSERT INTO submission_messages(message_id,submission_id,author_account_id,author_role,body,created_at)
              VALUES(?1,?2,?3,'developer',?4,?5)",
@@ -1745,7 +1765,20 @@ async fn answer_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Re
             &database, Some(&actor.account_id), "submission.information_provided", "submission",
             submission_id, json!({"developer_id":actor.developer_id,"bundle_id":bundle_id}), timestamp,
         )?,
-    ]).await?;
+    ]).await;
+    if let Err(cause) = saved {
+        if cause
+            .to_string()
+            .contains("submission is no longer waiting for information")
+        {
+            return error(
+                "INFORMATION_NOT_REQUESTED",
+                "The Version is no longer waiting for information",
+                409,
+            );
+        }
+        return Err(cause);
+    }
     json_response(&json!({"message_id":message_id,"state":"in_review"}), 201)
 }
 
@@ -2400,7 +2433,7 @@ async fn developer_app_history(req: Request, ctx: RouteContext<()>) -> Result<Re
 }
 
 async fn admin_notifications(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -2426,7 +2459,7 @@ async fn read_admin_notification(req: Request, ctx: RouteContext<()>) -> Result<
     {
         return Ok(response);
     }
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -2451,7 +2484,7 @@ async fn read_all_admin_notifications(req: Request, ctx: RouteContext<()>) -> Re
     {
         return Ok(response);
     }
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -2460,7 +2493,7 @@ async fn read_all_admin_notifications(req: Request, ctx: RouteContext<()>) -> Re
 }
 
 async fn admin_release_history(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -2526,7 +2559,7 @@ async fn admin_release(req: Request, ctx: RouteContext<()>) -> Result<Response> 
         .await?;
         return json_response(&json!({"admin":"mpkg-reviewer","release":release}), 200);
     }
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -2861,7 +2894,7 @@ async fn invalidate_release(mut req: Request, ctx: RouteContext<()>) -> Result<R
 }
 
 async fn admin_submissions(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -2902,7 +2935,7 @@ async fn admin_submissions(req: Request, ctx: RouteContext<()>) -> Result<Respon
 }
 
 async fn admin_submission(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -2947,7 +2980,7 @@ async fn admin_submission(req: Request, ctx: RouteContext<()>) -> Result<Respons
 }
 
 async fn start_submission_review(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -2984,7 +3017,7 @@ async fn start_submission_review(req: Request, ctx: RouteContext<()>) -> Result<
 }
 
 async fn decide_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -3173,7 +3206,19 @@ async fn decide_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Re
             "package_id":value_str(&submission,"bundle_id")}),
         timestamp,
     )?);
-    database.batch(statements).await?;
+    if let Err(cause) = database.batch(statements).await {
+        if cause
+            .to_string()
+            .contains("submission is no longer in review")
+        {
+            return error(
+                "SUBMISSION_NOT_REVIEWABLE",
+                "The Version was already reviewed. Reload it before continuing.",
+                409,
+            );
+        }
+        return Err(cause);
+    }
     json_response(
         &json!({"review_id":review_id,"submission":submission_payload(&database, submission_id).await?}),
         200,
@@ -3181,7 +3226,7 @@ async fn decide_submission(mut req: Request, ctx: RouteContext<()>) -> Result<Re
 }
 
 async fn admin_remove_app(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -3245,7 +3290,7 @@ async fn admin_remove_app(mut req: Request, ctx: RouteContext<()>) -> Result<Res
 }
 
 async fn admin_apps(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -3295,7 +3340,7 @@ async fn admin_apps(req: Request, ctx: RouteContext<()>) -> Result<Response> {
 }
 
 async fn admin_appeals(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -3368,7 +3413,7 @@ async fn admin_appeals(mut req: Request, ctx: RouteContext<()>) -> Result<Respon
 }
 
 async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(v) => v,
         Err(r) => return Ok(r),
     };
@@ -3414,7 +3459,7 @@ async fn admin_releases(req: Request, ctx: RouteContext<()>) -> Result<Response>
 }
 
 async fn approve_release(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    if let Err(response) = require_admin(&req, &ctx.env)? {
+    if let Err(response) = require_admin(&req, &ctx.env).await? {
         return Ok(response);
     }
     error(
@@ -3428,7 +3473,7 @@ async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
     if let Some(response) = rate_limited(&req, &ctx.env, "MUTATION_RATE_LIMITER", "reject").await? {
         return Ok(response);
     }
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(v) => v,
         Err(r) => return Ok(r),
     };
@@ -3482,7 +3527,7 @@ async fn reject_release(mut req: Request, ctx: RouteContext<()>) -> Result<Respo
 }
 
 async fn admin_download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let _actor = match require_admin(&req, &ctx.env)? {
+    let _actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -3497,7 +3542,7 @@ async fn admin_download(req: Request, ctx: RouteContext<()>) -> Result<Response>
 }
 
 async fn admin_packages(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -3528,7 +3573,7 @@ async fn set_package_suspension(
     ctx: RouteContext<()>,
     suspended: bool,
 ) -> Result<Response> {
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(value) => value,
         Err(response) => return Ok(response),
     };
@@ -3921,7 +3966,7 @@ async fn integrity_check(req: Request, ctx: RouteContext<()>) -> Result<Response
     {
         return Ok(response);
     }
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -3952,7 +3997,7 @@ async fn request_revalidation(req: Request, ctx: RouteContext<()>) -> Result<Res
     {
         return Ok(response);
     }
-    let actor = match require_admin(&req, &ctx.env)? {
+    let actor = match require_admin(&req, &ctx.env).await? {
         Ok(actor) => actor,
         Err(response) => return Ok(response),
     };
@@ -4010,11 +4055,13 @@ async fn request_revalidation(req: Request, ctx: RouteContext<()>) -> Result<Res
 }
 
 #[event(fetch)]
-pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
     let origin = req.headers().get("Origin")?;
     if req.method() == Method::Options {
         return with_cors(Response::empty()?.with_status(204), origin.as_deref());
     }
+    let notify = req.method() == Method::Post && req.path().ends_with("/submit");
+    let notification_env = env.clone();
     let result = Router::new()
         .get_async("/health", health)
         .get_async("/v1/apps", list_apps)
@@ -4165,11 +4212,24 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             error("INTERNAL_ERROR", "Internal server error", 500)?
         }
     };
+    if notify && response.status_code() < 300 {
+        ctx.wait_until(async move {
+            if let Err(cause) = admin_notifications::drain(&notification_env).await {
+                console_error!("App review notification pending: {cause}");
+            }
+        });
+    }
     with_cors(response, origin.as_deref())
 }
 
 #[event(scheduled)]
-pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+pub async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    if let Err(cause) = admin_notifications::drain(&env).await {
+        console_error!("App review notification retry failed: {cause}");
+    }
+    if event.cron() != "17 */6 * * *" {
+        return;
+    }
     let result: Result<()> = async {
         let database = env.d1("DB")?;
         let releases: Vec<Value> = store::rows(

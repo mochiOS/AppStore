@@ -344,7 +344,20 @@ pub async fn github_release_asset_for_account(
     }))
 }
 
-pub fn admin(req: &Request, env: &worker::Env) -> Result<Option<String>> {
+pub async fn admin(req: &Request, env: &worker::Env) -> Result<Option<String>> {
+    if let Some(provided) = req.headers().get("X-Admin-Service-Token")? {
+        let expected = env
+            .secret_store("ADMIN_SERVICE_TOKEN")?
+            .get()
+            .await?
+            .unwrap_or_default();
+        let actor = req.headers().get("X-Admin-Actor")?.unwrap_or_default();
+        return Ok((!expected.is_empty()
+            && !actor.trim().is_empty()
+            && actor.len() <= 254
+            && constant_time_eq(&expected, &provided))
+        .then_some(actor));
+    }
     let expected = env.secret("ADMIN_TOKEN")?.to_string();
     let provided = req.headers().get("X-Admin-Token")?.unwrap_or_default();
     let actor = req.headers().get("X-Admin-Account-ID")?.unwrap_or_default();

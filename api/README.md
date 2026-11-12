@@ -145,3 +145,15 @@ npx wrangler deploy
 公開済みパッケージは管理APIから一時停止／再開できます。停止中はストア一覧、詳細、Release一覧、ダウンロードから除外され、新しいReleaseも登録できません。Releaseの失効とは別の可逆なインシデント対応です。
 
 6時間ごとのscheduled integrity checkは公開ReleaseのDeveloperCA statusとGitHub repository／Release／Asset identityを再確認します。不整合や到達不能はfail closedで新規downloadを停止します。管理APIから即時整合性確認と再検証要求も行えます。
+
+### Administrative review and reliable Discord notifications
+
+AdminDashboard's Access-authenticated proxy uses `ADMIN_SERVICE_TOKEN` from the
+existing Secrets Store plus the verified `X-Admin-Actor` identity. Existing native
+admin clients retain their independent `ADMIN_TOKEN` authentication. Apply
+`0015_admin_notification_outbox.sql` before deployment. A submitted Version and
+its immutable notification event commit in one D1 transaction; failed delivery
+stays queued. The `ADMIN_DASHBOARD` service binding uses the existing
+`ADMIN_NOTIFICATION_SERVICE_TOKEN`, immediately after submit and on the one-minute
+retry schedule. The six-hour integrity schedule is unchanged. The Console does
+not independently enqueue app review notifications.

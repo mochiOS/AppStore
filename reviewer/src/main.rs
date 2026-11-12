@@ -37,6 +37,9 @@ struct Args {
     /// Queueを1回だけ確認し、最大1件を処理して終了する
     #[arg(long, requires = "queue")]
     once: bool,
+    /// Queueが空になるまで連続処理して終了する
+    #[arg(long, requires = "queue", conflicts_with = "once")]
+    drain: bool,
     /// Queueが空のときの確認間隔（5〜300秒）
     #[arg(long, default_value_t = 15)]
     poll_seconds: u64,
@@ -264,7 +267,13 @@ fn run_queue(
     println!(
         "Reviewer queue started (poll={}s, mode={})",
         poll.as_secs(),
-        if args.once { "once" } else { "continuous" }
+        if args.once {
+            "once"
+        } else if args.drain {
+            "drain"
+        } else {
+            "continuous"
+        }
     );
 
     while running.load(Ordering::SeqCst) {
@@ -283,7 +292,7 @@ fn run_queue(
                     }
                     Err(cause) => {
                         eprintln!("Reviewer processing failed for {release_id}: {cause:#}");
-                        if args.once {
+                        if args.once || args.drain {
                             return Err(cause);
                         }
                         sleep_while_running(retry_delay, &running);
@@ -296,14 +305,14 @@ fn run_queue(
             }
             Ok(None) => {
                 retry_delay = poll;
-                if args.once {
+                if args.once || args.drain {
                     println!("Reviewer queue is empty");
                     return Ok(());
                 }
                 sleep_while_running(poll, &running);
             }
             Err(cause) => {
-                if args.once {
+                if args.once || args.drain {
                     return Err(cause);
                 }
                 eprintln!("Reviewer queue request failed: {cause:#}");
@@ -640,6 +649,9 @@ mod tests {
     fn reviewer_modes_are_explicit_and_queue_polling_is_bounded() {
         assert!(Args::try_parse_from(["reviewer", "rel_test"]).is_ok());
         assert!(Args::try_parse_from(["reviewer", "--queue"]).is_ok());
+        assert!(Args::try_parse_from(["reviewer", "--queue", "--drain"]).is_ok());
+        assert!(Args::try_parse_from(["reviewer", "--drain"]).is_err());
+        assert!(Args::try_parse_from(["reviewer", "--queue", "--drain", "--once"]).is_err());
         assert!(Args::try_parse_from(["reviewer"]).is_err());
         assert!(Args::try_parse_from(["reviewer", "rel_test", "--queue"]).is_err());
         assert!(Args::try_parse_from(["reviewer", "--once"]).is_err());

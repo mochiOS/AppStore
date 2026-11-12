@@ -2,7 +2,7 @@ name: MPKG Reviewer
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "2-59/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   review:
-    name: Review next release
+    name: Drain pending releases
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -39,7 +39,7 @@ jobs:
             reviewer/target
           key: reviewer-${{ runner.os }}-${{ hashFiles('reviewer/Cargo.lock') }}
 
-      - name: Review next pending release
+      - name: Review all pending releases
         env:
           APPSTORE_REVIEWER_TOKEN: ${{ secrets.APPSTORE_REVIEWER_TOKEN }}
         run: |
@@ -47,4 +47,4 @@ jobs:
             echo "APPSTORE_REVIEWER_TOKEN repository secret is not configured." >&2
             exit 1
           fi
-          cargo run --locked --release --manifest-path reviewer/Cargo.toml -- --queue --once
+          cargo run --locked --release --manifest-path reviewer/Cargo.toml -- --queue --drain

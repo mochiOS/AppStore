@@ -4,7 +4,7 @@ GitHub Releases上の`.mpkg`を一時ファイルへ取得し、展開・実行�
 
 ## 自動実行
 
-本番では`.github/workflows/reviewer.yml`をGitHub Actionsで1時間ごとに実行します。ReviewerはAppStore APIから作成日時の古い未検証Releaseを最大1件取得し、検証結果を報告して終了します。Workflowは外部Pull Requestから起動せず、同時実行も1件に制限しています。
+本番では`.github/workflows/reviewer.yml`をGitHub Actionsで5分ごと（毎時2・7・12分…）に実行します。ReviewerはAppStore APIから作成日時の古い未検証Releaseを順に取得し、検証結果を報告します。Queueが空になると終了します。Workflowは外部Pull Requestから起動せず、同時実行も1件に制限しています。
 
 GitHubリポジトリの`Settings` → `Secrets and variables` → `Actions`で、次のRepository Secretを登録してください。
 
@@ -12,7 +12,7 @@ GitHubリポジトリの`Settings` → `Secrets and variables` → `Actions`で�
 APPSTORE_REVIEWER_TOKEN = AppStore APIへ設定したREVIEWER_TOKENと同じ値
 ```
 
-登録後は`Actions` → `MPKG Reviewer` → `Run workflow`で即時動作確認できます。通常は1時間間隔で自動起動し、Queueが空でも成功終了します。
+登録後は`Actions` → `MPKG Reviewer` → `Run workflow`で即時動作確認できます。通常は5分間隔で自動起動し、Queueが空でも成功終了します。GitHub Actionsのscheduleは最短5分で、負荷による実行遅延もあるため、登録から5分以内の開始を保証するものではありません。
 
 ローカルで常駐実行する場合はQueueモードを使用します。Reviewerは検証結果を報告したあと次のReleaseへ進みます。
 
@@ -27,11 +27,15 @@ Queueが空の場合は既定で15秒待機します。確認間隔は5〜300秒
 cargo run --release --manifest-path reviewer/Cargo.toml -- --queue --poll-seconds 30
 ```
 
-GitHub Actions、タスクスケジューラ、Cronから定期起動する場合は、最大1件を処理して終了するモードを使用します。Queueが空の場合も成功終了します。
+GitHub Actions、タスクスケジューラ、Cronから定期起動する場合は、Queueを消化して終了するモードを使用します。Queue取得・結果送信などの運用エラーは成功扱いにせず、非ゼロで終了します。Packageが不正な場合は失敗結果を保存して次のReleaseへ進みます。
 
 ```powershell
-cargo run --release --manifest-path reviewer/Cargo.toml -- --queue --once
+cargo run --release --manifest-path reviewer/Cargo.toml -- --queue --drain
 ```
+
+最大1件だけ処理する`--queue --once`も引き続き利用できます。`--drain`と`--once`は同時指定できません。
+
+毎分の確認が必要な場合は、常駐Reviewerを`--queue --poll-seconds 60`で実行できます。
 
 常駐モードは`Ctrl+C`を受けると現在のHTTP処理後に停止します。Queue取得エラーや結果送信エラーは最大5分まで指数バックオフし、leaseが切れたReleaseは10分後に再取得できます。MPKGの内容が不正な場合は失敗結果をAPIへ保存し、Runner自体は停止せず次のReleaseへ進みます。
 

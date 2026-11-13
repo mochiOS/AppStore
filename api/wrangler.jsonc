@@ -31,6 +31,7 @@
   	}
   ],
   "services": [
+    { "binding": "DEVELOPER_CONSOLE", "service": "mochios-developer-documentation" },
     { "binding": "ADMIN_DASHBOARD", "service": "mochios-admin-dashboard" },
     {
       "binding": "ACCOUNTS",

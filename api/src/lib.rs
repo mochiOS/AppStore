@@ -155,7 +155,38 @@ fn valid_icon_url(value: Option<&str>) -> bool {
     })
 }
 
-async fn remote_image(url: &str) -> Result<Option<media::ImageInfo>> {
+fn console_media_url(value: &str) -> bool {
+    let Ok(url) = Url::parse(value) else {
+        return false;
+    };
+    if url.origin().ascii_serialization() != "https://developer.mochios.org"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    let Some(path) = url.path().strip_prefix("/console/media/") else {
+        return false;
+    };
+    let parts: Vec<_> = path.split('/').collect();
+    if parts.len() != 3
+        || !mochios_certificate::is_valid_developer_id(parts[0])
+        || !valid_bundle_id(parts[1])
+    {
+        return false;
+    }
+    let Some(stem) = parts[2]
+        .strip_suffix(".png")
+        .or_else(|| parts[2].strip_suffix(".jpg"))
+    else {
+        return false;
+    };
+    uuid::Uuid::parse_str(stem).is_ok_and(|id| id.hyphenated().to_string() == stem)
+}
+
+async fn remote_image(env: &Env, url: &str) -> Result<Option<media::ImageInfo>> {
     let headers = Headers::new();
     headers.set("Accept", "image/png, image/jpeg")?;
     headers.set(
@@ -165,7 +196,14 @@ async fn remote_image(url: &str) -> Result<Option<media::ImageInfo>> {
     let mut init = RequestInit::new();
     init.with_method(Method::Get).with_headers(headers);
     let request = Request::new_with_init(url, &init)?;
-    let mut response = match Fetch::Request(request).send().await {
+    let fetched = if console_media_url(url) {
+        env.service("DEVELOPER_CONSOLE")?
+            .fetch_request(request)
+            .await
+    } else {
+        Fetch::Request(request).send().await
+    };
+    let mut response = match fetched {
         Ok(response) => response,
         Err(_) => return Ok(None),
     };
@@ -199,22 +237,36 @@ async fn remote_image(url: &str) -> Result<Option<media::ImageInfo>> {
     Ok(media::inspect(&bytes))
 }
 
-async fn valid_submission_media(input: &SubmissionDraftInput) -> Result<bool> {
-    let Some(icon) = remote_image(&input.icon_url).await? else {
-        return Ok(false);
+async fn submission_media_error(env: &Env, input: &SubmissionDraftInput) -> Result<Option<String>> {
+    let Some(icon) = remote_image(env, &input.icon_url).await? else {
+        return Ok(Some(
+            "The app icon could not be loaded as a PNG or JPEG image. Please retry.".into(),
+        ));
     };
-    if icon.media_type != input.icon_media_type
+    if icon.width != 512
+        || icon.height != 512
         || icon.width != input.icon_width
         || icon.height != input.icon_height
     {
-        return Ok(false);
+        return Ok(Some(format!(
+            "The app icon is {} by {} pixels; exactly 512 by 512 pixels are required.",
+            icon.width, icon.height
+        )));
+    }
+    if icon.media_type != input.icon_media_type {
+        return Ok(Some(
+            "The app icon file type does not match the saved Store Information.".into(),
+        ));
     }
     for screenshot in &input.screenshots {
-        if remote_image(&screenshot.image_url).await?.is_none() {
-            return Ok(false);
+        if remote_image(env, &screenshot.image_url).await?.is_none() {
+            return Ok(Some(format!(
+                "Screenshot {} could not be loaded as a PNG or JPEG image. Please retry.",
+                screenshot.position
+            )));
         }
     }
-    Ok(true)
+    Ok(None)
 }
 
 fn valid_app_metadata(
@@ -1267,12 +1319,8 @@ async fn developer_submissions(mut req: Request, ctx: RouteContext<()>) -> Resul
             422,
         );
     }
-    if !valid_submission_media(&input).await? {
-        return error(
-            "SUBMISSION_MEDIA_INVALID",
-            "Icon and screenshots must be reachable PNG or JPEG images; the icon must be exactly 512 by 512 pixels",
-            422,
-        );
+    if let Some(message) = submission_media_error(&ctx.env, &input).await? {
+        return error("SUBMISSION_MEDIA_INVALID", &message, 422);
     }
     let Some(build) = store::first::<Value>(
         &database,
@@ -1432,12 +1480,8 @@ async fn developer_submission(mut req: Request, ctx: RouteContext<()>) -> Result
             422,
         );
     }
-    if !valid_submission_media(&input).await? {
-        return error(
-            "SUBMISSION_MEDIA_INVALID",
-            "Icon and screenshots must be reachable PNG or JPEG images; the icon must be exactly 512 by 512 pixels",
-            422,
-        );
+    if let Some(message) = submission_media_error(&ctx.env, &input).await? {
+        return error("SUBMISSION_MEDIA_INVALID", &message, 422);
     }
     let Some(build) = store::first::<Value>(
         &database,
@@ -4551,5 +4595,27 @@ mod tests {
         assert!(store.contains("SELECT * FROM (\n         SELECT b.build_id AS release_id"));
         assert!(store.contains(") ORDER BY created_at DESC"));
         assert!(store.contains("b.package_digest,b.architecture,b.abi"));
+    }
+    #[test]
+    fn console_media_binding_is_limited_to_canonical_uploaded_images() {
+        let image = "https://developer.mochios.org/console/media/01900000000070008000000000000000/org.mochios.edit/12345678-1234-4234-8234-123456789abc.png";
+        assert!(console_media_url(image));
+        assert!(console_media_url(&image.replace(".png", ".jpg")));
+        for invalid in [
+            image.replace("https:", "http:"),
+            image.replace("developer.mochios.org", "developer.mochios.org.example.com"),
+            image.replace("developer.mochios.org", "user@developer.mochios.org"),
+            image.replace("/console/media/", "/console/api/"),
+            image.replace("org.mochios.edit", "../api"),
+            image.replace(".png", ".svg"),
+            image.replace("12345678-1234-4234-8234-123456789abc", "not-an-asset"),
+            format!("{image}?redirect=/console/api/session"),
+            format!("{image}#fragment"),
+        ] {
+            assert!(
+                !console_media_url(&invalid),
+                "unexpected internal fetch: {invalid}"
+            );
+        }
     }
 }

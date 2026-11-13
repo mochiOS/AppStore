@@ -220,6 +220,26 @@ const OPERATOR_NOTIFICATION_ACTIONS: &str =
      'submission.submit','submission.information_provided','appeal.submit',
      'app.developer_unpublish','app.certificate_rotated'";
 
+// Keep list, count and read authorization identical for every notification target.
+fn developer_notification_owner(parameter: &str) -> String {
+    r#"((a.target_type='release' AND EXISTS(
+                       SELECT 1 FROM releases r
+                        WHERE r.release_id=a.target_id AND r.registered_by={developer}))
+                  OR (a.target_type='package' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id={developer}))
+                  OR (a.target_type='submission' AND EXISTS(
+                       SELECT 1 FROM submissions s JOIN apps p ON p.app_id=s.app_id
+                        WHERE s.submission_id=a.target_id AND p.developer_id={developer}))
+                  OR (a.target_type='appeal' AND EXISTS(
+                       SELECT 1 FROM appeals x JOIN apps p ON p.app_id=x.app_id
+                        WHERE x.appeal_id=a.target_id AND p.developer_id={developer}))
+                  OR (a.target_type='app' AND EXISTS(
+                       SELECT 1 FROM apps p
+                        WHERE p.bundle_id=a.target_id AND p.developer_id={developer})))"#
+        .replace("{developer}", parameter)
+}
+
 pub async fn developer_notifications(
     db: &D1Database,
     developer_id: &str,
@@ -227,30 +247,28 @@ pub async fn developer_notifications(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Value>> {
+    let owner = developer_notification_owner("?1");
     rows(
         db,
         &format!(
             "SELECT a.audit_id AS notification_id,a.action,a.target_type,a.target_id,
-                    a.metadata_json,a.created_at,n.read_at
+                    a.metadata_json,a.created_at,n.read_at,
+                    CASE a.target_type
+                      WHEN 'release' THEN (SELECT r.bundle_id FROM releases r WHERE r.release_id=a.target_id)
+                      WHEN 'submission' THEN (SELECT p.bundle_id FROM submissions s JOIN apps p ON p.app_id=s.app_id WHERE s.submission_id=a.target_id)
+                      WHEN 'appeal' THEN (SELECT p.bundle_id FROM appeals x JOIN apps p ON p.app_id=x.app_id WHERE x.appeal_id=a.target_id)
+                      WHEN 'package' THEN a.target_id
+                      WHEN 'app' THEN a.target_id
+                    END AS bundle_id,
+                    CASE a.target_type
+                      WHEN 'submission' THEN a.target_id
+                      WHEN 'appeal' THEN (SELECT x.submission_id FROM appeals x WHERE x.appeal_id=a.target_id)
+                    END AS submission_id
                FROM audit_logs a
                LEFT JOIN notification_reads n
                  ON n.notification_id=a.audit_id AND n.account_id=?2
               WHERE a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
-                AND ((a.target_type='release' AND EXISTS(
-                       SELECT 1 FROM releases r
-                        WHERE r.release_id=a.target_id AND r.registered_by=?1))
-                  OR (a.target_type='package' AND EXISTS(
-                       SELECT 1 FROM apps p
-                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1))
-                  OR (a.target_type='submission' AND EXISTS(
-                       SELECT 1 FROM submissions s JOIN apps p ON p.app_id=s.app_id
-                        WHERE s.submission_id=a.target_id AND p.developer_id=?1))
-                  OR (a.target_type='appeal' AND EXISTS(
-                       SELECT 1 FROM appeals x JOIN apps p ON p.app_id=x.app_id
-                        WHERE x.appeal_id=a.target_id AND p.developer_id=?1))
-                  OR (a.target_type='app' AND EXISTS(
-                       SELECT 1 FROM apps p
-                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))
+                AND {owner}
               ORDER BY a.created_at DESC,a.audit_id DESC LIMIT ?3 OFFSET ?4"
         ),
         &[
@@ -268,6 +286,7 @@ pub async fn developer_unread_count(
     developer_id: &str,
     account_id: &str,
 ) -> Result<i64> {
+    let owner = developer_notification_owner("?1");
     let row: Option<Value> = first(
         db,
         &format!(
@@ -276,21 +295,7 @@ pub async fn developer_unread_count(
               WHERE a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
                 AND NOT EXISTS(SELECT 1 FROM notification_reads n
                                 WHERE n.notification_id=a.audit_id AND n.account_id=?2)
-                AND ((a.target_type='release' AND EXISTS(
-                       SELECT 1 FROM releases r
-                        WHERE r.release_id=a.target_id AND r.registered_by=?1))
-                  OR (a.target_type='package' AND EXISTS(
-                       SELECT 1 FROM apps p
-                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1))
-                  OR (a.target_type='submission' AND EXISTS(
-                       SELECT 1 FROM submissions s JOIN apps p ON p.app_id=s.app_id
-                        WHERE s.submission_id=a.target_id AND p.developer_id=?1))
-                  OR (a.target_type='appeal' AND EXISTS(
-                       SELECT 1 FROM appeals x JOIN apps p ON p.app_id=x.app_id
-                        WHERE x.appeal_id=a.target_id AND p.developer_id=?1))
-                  OR (a.target_type='app' AND EXISTS(
-                       SELECT 1 FROM apps p
-                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))"
+                AND {owner}"
         ),
         &[value(developer_id), value(account_id)],
     )
@@ -360,18 +365,14 @@ pub async fn mark_developer_notification_read(
     account_id: &str,
     now: i64,
 ) -> Result<bool> {
+    let owner = developer_notification_owner("?2");
     let marked: Option<Value> = first(
         db,
         &format!(
             "INSERT INTO notification_reads(notification_id,account_id,read_at)
              SELECT a.audit_id,?3,?4 FROM audit_logs a
               WHERE a.audit_id=?1 AND a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
-                AND ((a.target_type='release' AND EXISTS(
-                       SELECT 1 FROM releases r
-                        WHERE r.release_id=a.target_id AND r.registered_by=?2))
-                  OR (a.target_type='package' AND EXISTS(
-                       SELECT 1 FROM apps p
-                        WHERE p.bundle_id=a.target_id AND p.developer_id=?2)))
+                AND {owner}
              ON CONFLICT(notification_id,account_id) DO UPDATE SET read_at=excluded.read_at
              RETURNING notification_id"
         ),
@@ -392,18 +393,14 @@ pub async fn mark_all_developer_notifications_read(
     account_id: &str,
     now: i64,
 ) -> Result<()> {
+    let owner = developer_notification_owner("?1");
     run(
         db,
         &format!(
             "INSERT OR IGNORE INTO notification_reads(notification_id,account_id,read_at)
              SELECT a.audit_id,?2,?3 FROM audit_logs a
               WHERE a.action IN ({DEVELOPER_NOTIFICATION_ACTIONS})
-                AND ((a.target_type='release' AND EXISTS(
-                       SELECT 1 FROM releases r
-                        WHERE r.release_id=a.target_id AND r.registered_by=?1))
-                  OR (a.target_type='package' AND EXISTS(
-                       SELECT 1 FROM apps p
-                        WHERE p.bundle_id=a.target_id AND p.developer_id=?1)))"
+                AND {owner}"
         ),
         &[value(developer_id), value(account_id), number(now)],
     )

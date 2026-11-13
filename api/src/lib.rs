@@ -2972,8 +2972,15 @@ async fn admin_submissions(req: Request, ctx: RouteContext<()>) -> Result<Respon
         &[store::number(limit), store::number(offset)],
     )
     .await?;
+    let total: Option<Value> = store::first(
+        &db(&ctx)?,
+        &format!("SELECT COUNT(*) AS count FROM submissions s WHERE {condition}"),
+        &[],
+    )
+    .await?;
     json_response(
-        &json!({"admin":actor,"queue":queue,"submissions":submissions}),
+        &json!({"admin":actor,"queue":queue,"submissions":submissions,
+                "total_count":total.and_then(|row| row.get("count").cloned()).unwrap_or(json!(0))}),
         200,
     )
 }
@@ -3021,6 +3028,23 @@ async fn admin_submission(req: Request, ctx: RouteContext<()>) -> Result<Respons
         }),
         200,
     )
+}
+
+async fn admin_submission_download(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    if let Err(response) = require_admin(&req, &ctx.env).await? {
+        return Ok(response);
+    }
+    let build: Option<Value> = store::first(
+        &db(&ctx)?,
+        "SELECT b.download_url FROM submissions s
+           JOIN app_builds b ON b.build_id=s.build_id WHERE s.submission_id=?1",
+        &[store::value(param(&ctx, "submission_id"))],
+    )
+    .await?;
+    let Some(build) = build else {
+        return error("SUBMISSION_NOT_FOUND", "Submission not found", 404);
+    };
+    redirect_to(value_str(&build, "download_url").unwrap_or(""), "no-store")
 }
 
 async fn start_submission_review(req: Request, ctx: RouteContext<()>) -> Result<Response> {
@@ -4186,6 +4210,10 @@ pub async fn main(req: Request, env: Env, ctx: Context) -> Result<Response> {
         .get_async("/v1/admin/releases", admin_releases)
         .get_async("/v1/admin/submissions", admin_submissions)
         .get_async("/v1/admin/submissions/:submission_id", admin_submission)
+        .get_async(
+            "/v1/admin/submissions/:submission_id/download",
+            admin_submission_download,
+        )
         .post_async(
             "/v1/admin/submissions/:submission_id/start",
             start_submission_review,
